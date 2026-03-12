@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nli-cmbs"
+version = "0.1.0"
+description = "CMBS portfolio intelligence tool — pulls loan-level data from SEC EDGAR ABS-EE filings"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "lxml",
+    "typer",
+    "rich",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-httpx",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+nli = "nli_cmbs.cli:app"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: end-to-end tests against live EDGAR (deselected by default)",
+]

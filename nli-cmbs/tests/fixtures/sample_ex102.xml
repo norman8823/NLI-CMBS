@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<abs-ee:absEeData xmlns:abs-ee="http://xbrl.sec.gov/abs-ee/2024">
+    <abs-ee:assetData>
+        <abs-ee:assetNumber>1</abs-ee:assetNumber>
+        <abs-ee:prospectusLoanId>LOAN001</abs-ee:prospectusLoanId>
+        <abs-ee:originatorName>Example Bank</abs-ee:originatorName>
+        <abs-ee:originalLoanAmount>10000000.00</abs-ee:originalLoanAmount>
+        <abs-ee:originationDate>2023-06-15</abs-ee:originationDate>
+        <abs-ee:maturityDate>2033-07-01</abs-ee:maturityDate>
+        <abs-ee:originalTermMonths>120</abs-ee:originalTermMonths>
+        <abs-ee:originalAmortizationTermMonths>360</abs-ee:originalAmortizationTermMonths>
+        <abs-ee:originalInterestRate>0.0525</abs-ee:originalInterestRate>
+        <abs-ee:propertyType>Office</abs-ee:propertyType>
+    </abs-ee:assetData>
+</abs-ee:absEeData>
