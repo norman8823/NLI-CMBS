@@ -14,3 +14,6 @@ venv/
 .ruff_cache/
 *.db
 *.sqlite3
+all_tickers.txt
+batch_coverage_test.sh
+batch_test.sh
