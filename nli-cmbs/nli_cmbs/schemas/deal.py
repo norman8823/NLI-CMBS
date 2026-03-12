@@ -38,6 +38,12 @@ class DealDetailOut(BaseModel):
     wa_remaining_term: float | None = None
     delinquency_rate: float | None = None
     delinquency_by_status: dict[str, int] | None = None
+    wa_dscr: float | None = None
+    wa_occupancy: float | None = None
+    wa_ltv: float | None = None
+    pct_interest_only: float | None = None
+    pct_balloon: float | None = None
+    has_current_financials: bool = False
     last_filing_date: str | None = None
     created_at: datetime
     updated_at: datetime

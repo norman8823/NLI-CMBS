@@ -21,6 +21,12 @@ class DealMetrics:
     delinquency_by_status: dict[str, int]
     loan_count: int
     last_filing_date: str | None
+    wa_dscr: float | None = None
+    wa_occupancy: float | None = None
+    wa_ltv: float | None = None
+    pct_interest_only: float | None = None
+    pct_balloon: float | None = None
+    has_current_financials: bool = False
 
 
 async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> DealMetrics:
@@ -46,7 +52,13 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
             LoanSnapshot.ending_balance,
             LoanSnapshot.current_interest_rate,
             LoanSnapshot.delinquency_status,
+            LoanSnapshot.dscr_noi,
+            LoanSnapshot.occupancy,
+            LoanSnapshot.appraised_value,
+            LoanSnapshot.noi,
             Loan.original_term_months,
+            Loan.interest_only_indicator,
+            Loan.balloon_indicator,
         )
         .join(Loan, LoanSnapshot.loan_id == Loan.id)
         .where(LoanSnapshot.filing_id == filing_id)
@@ -68,7 +80,21 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
     delinq_counts: dict[str, int] = {}
     loan_count = len(rows)
 
-    for ending_balance, rate, delinq_status, orig_term in rows:
+    # Credit metric accumulators
+    weighted_dscr = Decimal(0)
+    dscr_balance = Decimal(0)
+    weighted_occupancy = Decimal(0)
+    occupancy_balance = Decimal(0)
+    weighted_ltv = Decimal(0)
+    ltv_balance = Decimal(0)
+    io_count = 0
+    balloon_count = 0
+    has_financials = False
+
+    for (
+        ending_balance, rate, delinq_status, dscr_noi, occupancy,
+        appraised_value, noi, orig_term, is_io, is_balloon,
+    ) in rows:
         bal = Decimal(str(ending_balance or 0))
         total_upb += bal
         weighted_rate += bal * Decimal(str(rate or 0))
@@ -83,9 +109,37 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
         if status not in ("0", "Unknown", ""):
             delinquent_balance += bal
 
+        # DSCR (weighted average by balance)
+        if dscr_noi is not None and bal:
+            weighted_dscr += bal * Decimal(str(dscr_noi))
+            dscr_balance += bal
+
+        # Occupancy (weighted average by balance)
+        if occupancy is not None and bal:
+            weighted_occupancy += bal * Decimal(str(occupancy))
+            occupancy_balance += bal
+
+        # LTV = ending_balance / appraised_value (weighted average by balance)
+        if appraised_value and float(appraised_value) > 0 and bal:
+            ltv = bal / Decimal(str(appraised_value))
+            weighted_ltv += bal * ltv
+            ltv_balance += bal
+
+        # Track if any loan has current financial data
+        if noi is not None or dscr_noi is not None:
+            has_financials = True
+
+        if is_io:
+            io_count += 1
+        if is_balloon:
+            balloon_count += 1
+
     wa_coupon = float(weighted_rate / total_upb * 100) if total_upb else 0.0
     wa_remaining_term = float(weighted_term / term_balance) if term_balance else None
     delinquency_rate = float(delinquent_balance / total_upb * 100) if total_upb else 0.0
+    wa_dscr = float(weighted_dscr / dscr_balance) if dscr_balance else None
+    wa_occupancy = float(weighted_occupancy / occupancy_balance * 100) if occupancy_balance else None
+    wa_ltv = float(weighted_ltv / ltv_balance * 100) if ltv_balance else None
 
     return DealMetrics(
         total_upb=float(total_upb),
@@ -95,4 +149,10 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
         delinquency_by_status=delinq_counts,
         loan_count=loan_count,
         last_filing_date=str(filing_date),
+        wa_dscr=round(wa_dscr, 4) if wa_dscr else None,
+        wa_occupancy=round(wa_occupancy, 2) if wa_occupancy else None,
+        wa_ltv=round(wa_ltv, 2) if wa_ltv else None,
+        pct_interest_only=round(io_count / loan_count * 100, 2) if loan_count else None,
+        pct_balloon=round(balloon_count / loan_count * 100, 2) if loan_count else None,
+        has_current_financials=has_financials,
     )

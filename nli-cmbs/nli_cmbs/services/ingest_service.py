@@ -128,6 +128,9 @@ class IngestService:
                     property_city=loan_data.property_city,
                     property_state=loan_data.property_state,
                     borrower_name=loan_data.borrower_name,
+                    interest_only_indicator=loan_data.interest_only_indicator,
+                    balloon_indicator=loan_data.balloon_indicator,
+                    lien_position=loan_data.lien_position,
                 )
                 self._session.add(db_loan)
                 loan_map[lid] = db_loan
@@ -155,46 +158,48 @@ class IngestService:
                     beginning_balance=float(snapshot_data.beginning_balance or 0),
                     ending_balance=float(snapshot_data.ending_balance or 0),
                     current_interest_rate=float(snapshot_data.current_interest_rate or 0),
-                    scheduled_interest_amount=(
-                        float(snapshot_data.scheduled_interest_amount)
-                        if snapshot_data.scheduled_interest_amount
-                        else None
-                    ),
-                    scheduled_principal_amount=(
-                        float(snapshot_data.scheduled_principal_amount)
-                        if snapshot_data.scheduled_principal_amount
-                        else None
-                    ),
-                    actual_interest_collected=(
-                        float(snapshot_data.actual_interest_collected)
-                        if snapshot_data.actual_interest_collected
-                        else None
-                    ),
-                    actual_principal_collected=(
-                        float(snapshot_data.actual_principal_collected)
-                        if snapshot_data.actual_principal_collected
-                        else None
-                    ),
-                    actual_other_collected=(
-                        float(snapshot_data.actual_other_collected)
-                        if snapshot_data.actual_other_collected
-                        else None
-                    ),
-                    servicer_advanced_amount=(
-                        float(snapshot_data.servicer_advanced_amount)
-                        if snapshot_data.servicer_advanced_amount
-                        else None
-                    ),
+                    scheduled_interest_amount=self._to_float(snapshot_data.scheduled_interest_amount),
+                    scheduled_principal_amount=self._to_float(snapshot_data.scheduled_principal_amount),
+                    actual_interest_collected=self._to_float(snapshot_data.actual_interest_collected),
+                    actual_principal_collected=self._to_float(snapshot_data.actual_principal_collected),
+                    actual_other_collected=self._to_float(snapshot_data.actual_other_collected),
+                    servicer_advanced_amount=self._to_float(snapshot_data.servicer_advanced_amount),
                     delinquency_status=snapshot_data.delinquency_status,
                     interest_paid_through_date=snapshot_data.interest_paid_through_date,
-                    next_payment_amount_due=(
-                        float(snapshot_data.next_payment_amount_due)
-                        if snapshot_data.next_payment_amount_due
-                        else None
+                    next_payment_amount_due=self._to_float(snapshot_data.next_payment_amount_due),
+                    # Credit metrics — current/mostRecent
+                    dscr_noi=self._to_float(snapshot_data.dscr_noi),
+                    dscr_ncf=self._to_float(snapshot_data.dscr_ncf),
+                    noi=self._to_float(snapshot_data.noi),
+                    ncf=self._to_float(snapshot_data.ncf),
+                    occupancy=self._to_float(snapshot_data.occupancy),
+                    revenue=self._to_float(snapshot_data.revenue),
+                    operating_expenses=self._to_float(snapshot_data.operating_expenses),
+                    debt_service=self._to_float(snapshot_data.debt_service),
+                    appraised_value=self._to_float(snapshot_data.appraised_value),
+                    # Credit metrics — securitization-time
+                    dscr_noi_at_securitization=self._to_float(
+                        snapshot_data.dscr_noi_at_securitization
+                    ),
+                    dscr_ncf_at_securitization=self._to_float(
+                        snapshot_data.dscr_ncf_at_securitization
+                    ),
+                    noi_at_securitization=self._to_float(snapshot_data.noi_at_securitization),
+                    ncf_at_securitization=self._to_float(snapshot_data.ncf_at_securitization),
+                    occupancy_at_securitization=self._to_float(
+                        snapshot_data.occupancy_at_securitization
+                    ),
+                    appraised_value_at_securitization=self._to_float(
+                        snapshot_data.appraised_value_at_securitization
                     ),
                 )
                 self._session.add(snap)
                 result.snapshots_created += 1
+
+    @staticmethod
+    def _to_float(value: Decimal | None) -> float | None:
+        """Convert Decimal to float, returning None if input is None."""
+        return float(value) if value is not None else None
 
     @staticmethod
     def _update_loan(db_loan: Loan, loan_data) -> None:
@@ -209,3 +214,9 @@ class IngestService:
             db_loan.borrower_name = loan_data.borrower_name
         if loan_data.originator_name and not db_loan.originator_name:
             db_loan.originator_name = loan_data.originator_name
+        if loan_data.interest_only_indicator is not None and db_loan.interest_only_indicator is None:
+            db_loan.interest_only_indicator = loan_data.interest_only_indicator
+        if loan_data.balloon_indicator is not None and db_loan.balloon_indicator is None:
+            db_loan.balloon_indicator = loan_data.balloon_indicator
+        if loan_data.lien_position and not db_loan.lien_position:
+            db_loan.lien_position = loan_data.lien_position

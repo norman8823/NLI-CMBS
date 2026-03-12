@@ -80,8 +80,6 @@ class Ex102Parser:
 
     def _parse_loan_element(self, el: etree._Element) -> tuple[ParsedLoan, ParsedLoanSnapshot] | None:
         """Parse a single <assets> element into a ParsedLoan and ParsedLoanSnapshot."""
-        # The actual loan ID is assetNumber (assetTypeNumber is just a label).
-        # assetNumber can be an int ("1") or a compound ID ("3-001") for multi-property loans.
         prospectus_loan_id = self._get_text(el, "assetNumber")
         if not prospectus_loan_id:
             return None
@@ -98,7 +96,7 @@ class Ex102Parser:
             property_city=self._get_text(el, "property/propertyCity"),
             property_state=self._get_text(el, "property/propertyState"),
             property_type=self._get_text(el, "property/propertyTypeCode"),
-            borrower_name=None,  # Not present in EX-102 CMBS schema
+            borrower_name=None,
             maturity_date=self._parse_date(self._get_text(el, "maturityDate")),
             original_term_months=self._parse_int(self._get_text(el, "originalTermLoanNumber")),
             original_amortization_term_months=self._parse_int(
@@ -107,10 +105,12 @@ class Ex102Parser:
             original_interest_rate=self._parse_decimal(
                 self._get_text(el, "originalInterestRatePercentage")
             ),
+            interest_only_indicator=self._parse_bool(self._get_text(el, "interestOnlyIndicator")),
+            balloon_indicator=self._parse_bool(self._get_text(el, "balloonIndicator")),
+            lien_position=self._get_text(el, "lienPositionSecuritizationCode"),
         )
 
-        # No separate actual_interest/principal collected fields in schema;
-        # use scheduled amounts as documented in the recon report.
+        # Build snapshot with existing payment fields
         snapshot = ParsedLoanSnapshot(
             reporting_period_begin_date=self._parse_date(
                 self._get_text(el, "reportingPeriodBeginningDate")
@@ -154,17 +154,77 @@ class Ex102Parser:
             ),
         )
 
+        # Extract credit metrics from <property> sub-element
+        self._extract_credit_metrics(el, snapshot)
+
         return loan, snapshot
+
+    def _extract_credit_metrics(self, el: etree._Element, snapshot: ParsedLoanSnapshot) -> None:
+        """Extract DSCR, NOI, NCF, occupancy, appraised value from property element.
+
+        Uses dual-extraction: try mostRecent* first (current performance),
+        then *Securitization* (underwriting values). Store in separate columns.
+        """
+        # Current/mostRecent metrics (BANK5-style filings)
+        snapshot.dscr_noi = self._parse_decimal(
+            self._get_text(el, "property/mostRecentDebtServiceCoverageNetOperatingIncomePercentage")
+        )
+        snapshot.dscr_ncf = self._parse_decimal(
+            # Note: XML has lowercase 'p' in "percentage" — this is a known typo in the schema
+            self._get_text(el, "property/mostRecentDebtServiceCoverageNetCashFlowpercentage")
+        )
+        snapshot.noi = self._parse_decimal(
+            self._get_text(el, "property/mostRecentNetOperatingIncomeAmount")
+        )
+        snapshot.ncf = self._parse_decimal(
+            self._get_text(el, "property/mostRecentNetCashFlowAmount")
+        )
+        snapshot.occupancy = self._parse_decimal(
+            self._get_text(el, "property/mostRecentPhysicalOccupancyPercentage")
+        )
+        snapshot.revenue = self._parse_decimal(
+            self._get_text(el, "property/mostRecentRevenueAmount")
+        )
+        snapshot.operating_expenses = self._parse_decimal(
+            self._get_text(el, "property/operatingExpensesAmount")
+        )
+        snapshot.debt_service = self._parse_decimal(
+            self._get_text(el, "property/mostRecentDebtServiceAmount")
+        )
+
+        # Securitization-time metrics (BMARK-style filings, also present as fallback in others)
+        snapshot.dscr_noi_at_securitization = self._parse_decimal(
+            self._get_text(
+                el, "property/debtServiceCoverageNetOperatingIncomeSecuritizationPercentage"
+            )
+        )
+        snapshot.dscr_ncf_at_securitization = self._parse_decimal(
+            self._get_text(
+                el, "property/debtServiceCoverageNetCashFlowSecuritizationPercentage"
+            )
+        )
+        snapshot.noi_at_securitization = self._parse_decimal(
+            self._get_text(el, "property/netOperatingIncomeSecuritizationAmount")
+        )
+        snapshot.ncf_at_securitization = self._parse_decimal(
+            self._get_text(el, "property/netCashFlowFlowSecuritizationAmount")
+        )
+        snapshot.occupancy_at_securitization = self._parse_decimal(
+            self._get_text(el, "property/physicalOccupancySecuritizationPercentage")
+        )
+        snapshot.appraised_value_at_securitization = self._parse_decimal(
+            self._get_text(el, "property/valuationSecuritizationAmount")
+        )
+        # No mostRecent appraisal — use securitization value for both
+        snapshot.appraised_value = snapshot.appraised_value_at_securitization
 
     def _get_text(self, parent: etree._Element, tag: str) -> str | None:
         """Get child element text, handling the default namespace and nested paths."""
-        # Handle paths like "property/propertyName"
         parts = tag.split("/")
         current = parent
         for part in parts:
             child = current.find(f"{{{NS}}}{part}")
             if child is None:
-                # Fallback: try without namespace
                 child = current.find(part)
             if child is None:
                 return None
@@ -202,3 +262,9 @@ class Ex102Parser:
             return int(value)
         except ValueError:
             return None
+
+    @staticmethod
+    def _parse_bool(value: str | None) -> bool | None:
+        if value is None:
+            return None
+        return value.lower() in ("true", "1", "yes")

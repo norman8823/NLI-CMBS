@@ -25,6 +25,9 @@ class ParsedLoan(BaseModel):
     original_term_months: int | None = None
     original_amortization_term_months: int | None = None
     original_interest_rate: Decimal | None = None
+    interest_only_indicator: bool | None = None
+    balloon_indicator: bool | None = None
+    lien_position: str | None = None
 
 
 class ParsedLoanSnapshot(BaseModel):
@@ -44,6 +47,23 @@ class ParsedLoanSnapshot(BaseModel):
     delinquency_status: str | None = None
     interest_paid_through_date: date | None = None
     next_payment_amount_due: Decimal | None = None
+    # Current/most recent credit metrics
+    dscr_noi: Decimal | None = None
+    dscr_ncf: Decimal | None = None
+    noi: Decimal | None = None
+    ncf: Decimal | None = None
+    occupancy: Decimal | None = None
+    revenue: Decimal | None = None
+    operating_expenses: Decimal | None = None
+    debt_service: Decimal | None = None
+    appraised_value: Decimal | None = None
+    # Securitization-time credit metrics
+    dscr_noi_at_securitization: Decimal | None = None
+    dscr_ncf_at_securitization: Decimal | None = None
+    noi_at_securitization: Decimal | None = None
+    ncf_at_securitization: Decimal | None = None
+    occupancy_at_securitization: Decimal | None = None
+    appraised_value_at_securitization: Decimal | None = None
 
 
 class ParsedFiling(BaseModel):
