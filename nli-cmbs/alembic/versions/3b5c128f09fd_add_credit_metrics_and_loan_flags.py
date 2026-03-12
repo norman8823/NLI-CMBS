@@ -7,9 +7,9 @@ Create Date: 2026-03-12 13:08:54.547373
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '3b5c128f09fd'
@@ -29,12 +29,30 @@ def upgrade() -> None:
     op.add_column('loan_snapshots', sa.Column('operating_expenses', sa.Numeric(precision=20, scale=2), nullable=True))
     op.add_column('loan_snapshots', sa.Column('debt_service', sa.Numeric(precision=20, scale=2), nullable=True))
     op.add_column('loan_snapshots', sa.Column('appraised_value', sa.Numeric(precision=20, scale=2), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('dscr_noi_at_securitization', sa.Numeric(precision=10, scale=4), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('dscr_ncf_at_securitization', sa.Numeric(precision=10, scale=4), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('noi_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('ncf_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('occupancy_at_securitization', sa.Numeric(precision=5, scale=4), nullable=True))
-    op.add_column('loan_snapshots', sa.Column('appraised_value_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True))
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('dscr_noi_at_securitization', sa.Numeric(precision=10, scale=4), nullable=True),
+    )
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('dscr_ncf_at_securitization', sa.Numeric(precision=10, scale=4), nullable=True),
+    )
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('noi_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True),
+    )
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('ncf_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True),
+    )
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('occupancy_at_securitization', sa.Numeric(precision=5, scale=4), nullable=True),
+    )
+    op.add_column(
+        'loan_snapshots',
+        sa.Column('appraised_value_at_securitization', sa.Numeric(precision=20, scale=2), nullable=True),
+    )
     op.add_column('loans', sa.Column('interest_only_indicator', sa.Boolean(), nullable=True))
     op.add_column('loans', sa.Column('balloon_indicator', sa.Boolean(), nullable=True))
     op.add_column('loans', sa.Column('lien_position', sa.String(length=20), nullable=True))

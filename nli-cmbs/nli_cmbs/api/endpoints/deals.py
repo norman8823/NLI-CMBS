@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nli_cmbs.db.models import Deal
+from nli_cmbs.db.models import Deal, Loan
 from nli_cmbs.db.session import get_session
-from nli_cmbs.schemas.deal import DealDetailOut, DealOut
+from nli_cmbs.schemas.deal import DealDetailOut, DealOut, MaturityWallItem
 from nli_cmbs.services.metrics import compute_deal_metrics
 
 router = APIRouter()
@@ -59,7 +59,40 @@ async def get_deal_by_ticker(ticker: str, session: AsyncSession = Depends(get_se
         wa_remaining_term=metrics.wa_remaining_term,
         delinquency_rate=metrics.delinquency_rate,
         delinquency_by_status=metrics.delinquency_by_status or None,
+        wa_dscr=metrics.wa_dscr,
+        wa_occupancy=metrics.wa_occupancy,
+        wa_ltv=metrics.wa_ltv,
+        pct_interest_only=metrics.pct_interest_only,
+        pct_balloon=metrics.pct_balloon,
+        has_current_financials=metrics.has_current_financials,
         last_filing_date=metrics.last_filing_date,
+        last_filing_accession=metrics.last_filing_accession,
         created_at=deal.created_at,
         updated_at=deal.updated_at,
     )
+
+
+@router.get("/{ticker}/maturity-wall", response_model=list[MaturityWallItem])
+async def get_maturity_wall(ticker: str, session: AsyncSession = Depends(get_session)):
+    """Get maturity distribution by year for a deal's loans."""
+    result = await session.execute(select(Deal).where(Deal.ticker == ticker))
+    deal = result.scalar_one_or_none()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    stmt = (
+        select(
+            extract("year", Loan.maturity_date).label("year"),
+            func.count().label("loan_count"),
+            func.sum(Loan.original_loan_amount).label("total_balance"),
+        )
+        .where(Loan.deal_id == deal.id, Loan.maturity_date.isnot(None))
+        .group_by(extract("year", Loan.maturity_date))
+        .order_by(extract("year", Loan.maturity_date))
+    )
+    rows = (await session.execute(stmt)).all()
+
+    return [
+        MaturityWallItem(year=int(row.year), loan_count=row.loan_count, total_balance=float(row.total_balance))
+        for row in rows
+    ]

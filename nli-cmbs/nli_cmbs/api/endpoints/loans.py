@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,21 +12,40 @@ from nli_cmbs.schemas.loan import LoanOut, LoanSearchOut, SnapshotOut
 router = APIRouter()
 
 
+def _to_float(val) -> float | None:
+    return float(val) if val is not None else None
+
+
 def _latest_snapshot(loan: Loan) -> SnapshotOut | None:
     """Get the most recent snapshot for a loan."""
     if not loan.snapshots:
         return None
     latest = max(loan.snapshots, key=lambda s: s.reporting_period_end_date)
     return SnapshotOut(
-        ending_balance=float(latest.ending_balance) if latest.ending_balance else None,
-        beginning_balance=float(latest.beginning_balance) if latest.beginning_balance else None,
-        current_interest_rate=float(latest.current_interest_rate) if latest.current_interest_rate else None,
+        ending_balance=_to_float(latest.ending_balance),
+        beginning_balance=_to_float(latest.beginning_balance),
+        current_interest_rate=_to_float(latest.current_interest_rate),
         delinquency_status=latest.delinquency_status,
-        scheduled_interest_amount=float(latest.scheduled_interest_amount) if latest.scheduled_interest_amount else None,
-        scheduled_principal_amount=(
-            float(latest.scheduled_principal_amount) if latest.scheduled_principal_amount else None
-        ),
+        scheduled_interest_amount=_to_float(latest.scheduled_interest_amount),
+        scheduled_principal_amount=_to_float(latest.scheduled_principal_amount),
+        actual_interest_collected=_to_float(latest.actual_interest_collected),
+        actual_principal_collected=_to_float(latest.actual_principal_collected),
         reporting_period_end_date=latest.reporting_period_end_date,
+        dscr_noi=_to_float(latest.dscr_noi),
+        dscr_ncf=_to_float(latest.dscr_ncf),
+        noi=_to_float(latest.noi),
+        ncf=_to_float(latest.ncf),
+        occupancy=_to_float(latest.occupancy),
+        revenue=_to_float(latest.revenue),
+        operating_expenses=_to_float(latest.operating_expenses),
+        debt_service=_to_float(latest.debt_service),
+        appraised_value=_to_float(latest.appraised_value),
+        dscr_noi_at_securitization=_to_float(latest.dscr_noi_at_securitization),
+        dscr_ncf_at_securitization=_to_float(latest.dscr_ncf_at_securitization),
+        noi_at_securitization=_to_float(latest.noi_at_securitization),
+        ncf_at_securitization=_to_float(latest.ncf_at_securitization),
+        occupancy_at_securitization=_to_float(latest.occupancy_at_securitization),
+        appraised_value_at_securitization=_to_float(latest.appraised_value_at_securitization),
     )
 
 
@@ -46,6 +67,9 @@ def _loan_to_out(loan: Loan) -> LoanOut:
         property_city=loan.property_city,
         property_state=loan.property_state,
         borrower_name=loan.borrower_name,
+        interest_only_indicator=loan.interest_only_indicator,
+        balloon_indicator=loan.balloon_indicator,
+        lien_position=loan.lien_position,
         created_at=loan.created_at,
         latest_snapshot=_latest_snapshot(loan),
     )
@@ -100,6 +124,7 @@ async def search_loans(
 async def list_loans_by_ticker(
     ticker: str,
     delinquent: bool | None = Query(None, description="Filter to delinquent loans only"),
+    maturing_within: int | None = Query(None, description="Filter to loans maturing within N months"),
     sort_by: str | None = Query(None, description="Sort field: ending_balance, original_loan_amount, asset_number"),
     limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
@@ -135,6 +160,10 @@ async def list_loans_by_ticker(
                 )
             )
             stmt = stmt.where(Loan.id.in_(delinquent_loan_ids))
+
+    if maturing_within is not None:
+        cutoff = date.today() + timedelta(days=maturing_within * 30)
+        stmt = stmt.where(Loan.maturity_date.isnot(None), Loan.maturity_date <= cutoff)
 
     # Sorting
     if sort_by == "ending_balance":

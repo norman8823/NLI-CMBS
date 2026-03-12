@@ -21,6 +21,7 @@ class DealMetrics:
     delinquency_by_status: dict[str, int]
     loan_count: int
     last_filing_date: str | None
+    last_filing_accession: str | None = None
     wa_dscr: float | None = None
     wa_occupancy: float | None = None
     wa_ltv: float | None = None
@@ -32,7 +33,7 @@ class DealMetrics:
 async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> DealMetrics:
     """Compute metrics for a deal from its latest filing's snapshots."""
     latest_filing_stmt = (
-        select(Filing.id, Filing.filing_date)
+        select(Filing.id, Filing.filing_date, Filing.accession_number)
         .where(Filing.deal_id == deal_id, Filing.parsed.is_(True))
         .order_by(Filing.filing_date.desc())
         .limit(1)
@@ -45,7 +46,7 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
             last_filing_date=None,
         )
 
-    filing_id, filing_date = filing_row
+    filing_id, filing_date, accession_number = filing_row
 
     snap_stmt = (
         select(
@@ -69,7 +70,7 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
         return DealMetrics(
             total_upb=0, wa_coupon=0, wa_remaining_term=None,
             delinquency_rate=0, delinquency_by_status={}, loan_count=0,
-            last_filing_date=str(filing_date),
+            last_filing_date=str(filing_date), last_filing_accession=accession_number,
         )
 
     total_upb = Decimal(0)
@@ -149,6 +150,7 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
         delinquency_by_status=delinq_counts,
         loan_count=loan_count,
         last_filing_date=str(filing_date),
+        last_filing_accession=accession_number,
         wa_dscr=round(wa_dscr, 4) if wa_dscr else None,
         wa_occupancy=round(wa_occupancy, 2) if wa_occupancy else None,
         wa_ltv=round(wa_ltv, 2) if wa_ltv else None,

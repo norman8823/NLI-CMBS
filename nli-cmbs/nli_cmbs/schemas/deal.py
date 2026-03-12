@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DealOut(BaseModel):
@@ -45,7 +45,14 @@ class DealDetailOut(BaseModel):
     pct_balloon: float | None = None
     has_current_financials: bool = False
     last_filing_date: str | None = None
+    last_filing_accession: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class MaturityWallItem(BaseModel):
+    year: int
+    loan_count: int
+    total_balance: float = Field(description="Sum of original loan amounts maturing in this year")
