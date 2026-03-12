@@ -4,6 +4,18 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class SnapshotOut(BaseModel):
+    ending_balance: float | None = None
+    beginning_balance: float | None = None
+    current_interest_rate: float | None = None
+    delinquency_status: str | None = None
+    scheduled_interest_amount: float | None = None
+    scheduled_principal_amount: float | None = None
+    reporting_period_end_date: date | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class LoanOut(BaseModel):
     id: UUID
     deal_id: UUID
@@ -22,6 +34,7 @@ class LoanOut(BaseModel):
     property_state: str | None = None
     borrower_name: str | None = None
     created_at: datetime
+    latest_snapshot: SnapshotOut | None = None
 
     model_config = {"from_attributes": True}
 

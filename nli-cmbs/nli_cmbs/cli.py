@@ -177,77 +177,169 @@ async def _fetch_filing(ticker: str) -> None:
 
 @app.command()
 def scan(ticker: str = typer.Argument(..., help="Deal ticker, e.g. BMARK-2024-V6")):
-    """Scan a CMBS deal — resolve CIK, fetch latest ABS-EE filing, download EX-102 XML."""
+    """Scan a CMBS deal — full pipeline: resolve CIK, fetch filing, parse XML, persist to DB."""
     asyncio.run(_scan(ticker))
 
 
 async def _scan(ticker: str) -> None:
+    from rich.table import Table
+    from sqlalchemy import func, select
+
+    from nli_cmbs.db.models import Loan, LoanSnapshot
     from nli_cmbs.db.session import async_session_factory
-    from nli_cmbs.edgar.cik_resolver import CikResolver
-    from nli_cmbs.edgar.client import EdgarClient
-    from nli_cmbs.edgar.filing_fetcher import FilingFetcher
+    from nli_cmbs.services.deal_service import DealService
 
-    client = EdgarClient()
+    async with async_session_factory() as session:
+        console.print(f"\n[bold]Scanning deal:[/bold] {ticker}")
+        svc = DealService(session)
+        result = await svc.scan_deal(ticker)
+
+        # Print IngestResult stats
+        console.print("\n" + "=" * 60)
+        console.print(f"[bold]Deal:[/bold]              {result.deal_ticker}")
+        console.print(f"[bold]Filing:[/bold]            {result.filing_accession}")
+        if result.reporting_period:
+            console.print(f"[bold]Reporting Period:[/bold]  {result.reporting_period}")
+        if result.already_parsed:
+            console.print("[yellow]Already parsed — no new data ingested.[/yellow]")
+        else:
+            console.print(f"[bold]Loans Created:[/bold]     {result.loans_created}")
+            console.print(f"[bold]Loans Updated:[/bold]     {result.loans_updated}")
+            console.print(f"[bold]Snapshots Created:[/bold] {result.snapshots_created}")
+            if result.parse_errors:
+                console.print(f"[yellow]Parse Errors:[/yellow]      {result.parse_errors}")
+        if result.errors:
+            for err in result.errors[:5]:
+                console.print(f"  [red]Error:[/red] {err}")
+        console.print("=" * 60)
+
+        # Query DB for summary
+        deal = await svc.get_by_ticker(result.deal_ticker)
+        if not deal:
+            return
+
+        # Total loans
+        loan_count_result = await session.execute(
+            select(func.count()).select_from(Loan).where(Loan.deal_id == deal.id)
+        )
+        total_loans = loan_count_result.scalar() or 0
+
+        # Total UPB (sum of ending_balance from latest snapshots)
+        upb_result = await session.execute(
+            select(func.sum(LoanSnapshot.ending_balance)).where(
+                LoanSnapshot.loan_id.in_(
+                    select(Loan.id).where(Loan.deal_id == deal.id)
+                )
+            )
+        )
+        total_upb = upb_result.scalar() or 0
+
+        # Delinquency counts
+        delinq_result = await session.execute(
+            select(LoanSnapshot.delinquency_status, func.count()).where(
+                LoanSnapshot.loan_id.in_(
+                    select(Loan.id).where(Loan.deal_id == deal.id)
+                ),
+                LoanSnapshot.delinquency_status.isnot(None),
+                LoanSnapshot.delinquency_status != "",
+            ).group_by(LoanSnapshot.delinquency_status)
+        )
+        delinq_counts = dict(delinq_result.all())
+
+        console.print(f"\n[bold]Total Loans:[/bold]  {total_loans}")
+        console.print(f"[bold]Total UPB:[/bold]    ${total_upb:,.2f}")
+        if delinq_counts:
+            console.print("[bold]Delinquency:[/bold]")
+            for status, count in sorted(delinq_counts.items()):
+                console.print(f"  {status}: {count}")
+
+        # Top 5 loans by balance
+        top_loans_result = await session.execute(
+            select(Loan).where(Loan.deal_id == deal.id)
+            .order_by(Loan.original_loan_amount.desc())
+            .limit(5)
+        )
+        top_loans = list(top_loans_result.scalars().all())
+
+        if top_loans:
+            table = Table(title="Top 5 Loans by Balance")
+            table.add_column("Loan ID", style="bold")
+            table.add_column("Property Name")
+            table.add_column("Borrower")
+            table.add_column("Original Amount", justify="right")
+            table.add_column("City, State")
+
+            for loan in top_loans:
+                amount = f"${loan.original_loan_amount:,.2f}" if loan.original_loan_amount else "-"
+                location = f"{loan.property_city or '-'}, {loan.property_state or '-'}"
+                table.add_row(
+                    loan.prospectus_loan_id,
+                    loan.property_name or "-",
+                    loan.borrower_name or "-",
+                    amount,
+                    location,
+                )
+
+            console.print(table)
+
+
+@app.command(name="parse-xml")
+def parse_xml(filepath: str = typer.Argument(..., help="Path to EX-102 XML file")):
+    """Parse an EX-102 XML file and display loan data."""
+    from pathlib import Path
+
+    from rich.table import Table
+
+    from nli_cmbs.edgar.xml_parser import Ex102ParseError, Ex102Parser
+
+    path = Path(filepath)
+    if not path.exists():
+        console.print(f"[red]File not found:[/red] {filepath}")
+        raise typer.Exit(1)
+
+    xml_bytes = path.read_bytes()
+    parser = Ex102Parser()
+
     try:
-        async with async_session_factory() as session:
-            # Step 1: Resolve CIK
-            console.print(f"\n[bold]Step 1:[/bold] Resolving CIK for {ticker}...")
-            resolver = CikResolver(edgar_client=client, db_session=session)
-            mapping = await resolver.resolve(ticker)
-            if not mapping:
-                console.print(f"[red]Failed at Step 1:[/red] Could not resolve CIK for {ticker}")
-                console.print("  Check that the ticker format is correct (e.g. BMARK-2024-V6)")
-                raise typer.Exit(1)
+        filing = parser.parse(xml_bytes)
+    except Ex102ParseError as e:
+        console.print(f"[red]Parse error:[/red] {e}")
+        raise typer.Exit(1)
 
-            parsed = resolver.parse_ticker(ticker)
-            normalized = parsed["normalized"] if parsed else ticker
-            console.print(f"  [green]Resolved.[/green] CIK {mapping.effective_cik}")
+    console.print(f"\n[bold]Total loans parsed:[/bold] {filing.total_loan_count}")
+    if filing.reporting_period_start:
+        console.print(
+            f"[bold]Reporting period:[/bold] {filing.reporting_period_start} to {filing.reporting_period_end}"
+        )
+    if filing.parse_errors:
+        console.print(f"[yellow]Parse errors ({len(filing.parse_errors)}):[/yellow]")
+        for err in filing.parse_errors[:5]:
+            console.print(f"  - {err}")
 
-            # Step 2: Fetch latest filing
-            console.print("\n[bold]Step 2:[/bold] Fetching latest ABS-EE filing...")
-            fetcher = FilingFetcher(edgar_client=client, db_session=session)
-            filing = await fetcher.get_latest_filing(mapping.effective_cik, deal_ticker=normalized)
-            if not filing:
-                console.print("[red]Failed at Step 2:[/red] No ABS-EE filing found on EDGAR")
-                console.print(f"  CIK {mapping.effective_cik} may not have ABS-EE filings, or EDGAR may be unavailable")
-                raise typer.Exit(1)
+    table = Table(title="First 5 Loans")
+    table.add_column("ID", style="bold")
+    table.add_column("Originator")
+    table.add_column("Amount", justify="right")
+    table.add_column("Maturity")
+    table.add_column("Property")
+    table.add_column("City, State")
+    table.add_column("Type")
 
-            console.print(f"  [green]Found.[/green] {filing.accession_number} ({filing.filing_date})")
+    for loan in filing.loans[:5]:
+        amount = f"${loan.original_loan_amount:,.2f}" if loan.original_loan_amount else "-"
+        maturity = str(loan.maturity_date) if loan.maturity_date else "-"
+        location = f"{loan.property_city or '-'}, {loan.property_state or '-'}"
+        table.add_row(
+            loan.prospectus_loan_id,
+            loan.originator_name or "-",
+            amount,
+            maturity,
+            loan.property_name or "-",
+            location,
+            loan.property_type or "-",
+        )
 
-            # Step 3: Download EX-102 XML
-            console.print("\n[bold]Step 3:[/bold] Downloading EX-102 XML...")
-            try:
-                xml_bytes = await fetcher.download_exhibit_102(filing)
-            except Exception as e:
-                console.print("[red]Failed at Step 3:[/red] Could not download EX-102 XML")
-                console.print(f"  URL: {filing.exhibit_url}")
-                console.print(f"  Error: {e}")
-                raise typer.Exit(1)
-
-            xml_size = len(xml_bytes)
-            console.print(f"  [green]Downloaded.[/green] {xml_size:,} bytes")
-
-            # Print summary
-            console.print("\n" + "=" * 60)
-            console.print(f"[bold]Deal:[/bold]           {normalized}")
-            console.print(f"[bold]Trust:[/bold]          {mapping.trust_name}")
-            console.print(f"[bold]CIK:[/bold]            {mapping.effective_cik}")
-            if mapping.trust_cik and mapping.trust_cik != mapping.depositor_cik:
-                console.print(f"[bold]Depositor CIK:[/bold]  {mapping.depositor_cik}")
-            console.print(f"[bold]Latest Filing:[/bold]  {filing.filing_date} (accession: {filing.accession_number})")
-            console.print(f"[bold]EX-102 URL:[/bold]     {filing.exhibit_url}")
-            if xml_size >= 1_000_000:
-                console.print(f"[bold]XML Size:[/bold]       {xml_size / 1_000_000:.1f} MB")
-            else:
-                console.print(f"[bold]XML Size:[/bold]       {xml_size / 1_000:.1f} KB")
-            console.print("=" * 60)
-
-            # Raw XML preview
-            preview = xml_bytes[:500].decode("utf-8", errors="replace")
-            console.print("\n[bold]Raw XML preview (first 500 chars):[/bold]")
-            console.print(f"[dim]{preview}[/dim]")
-    finally:
-        await client.close()
+    console.print(table)
 
 
 @app.command()

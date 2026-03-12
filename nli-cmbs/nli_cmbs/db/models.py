@@ -73,6 +73,10 @@ class Loan(Base):
     snapshots: Mapped[list["LoanSnapshot"]] = relationship(back_populates="loan", cascade="all, delete-orphan")
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(back_populates="loan")
 
+    __table_args__ = (
+        Index("uq_loans_deal_prospectus", "deal_id", "prospectus_loan_id", unique=True),
+    )
+
 
 class LoanSnapshot(Base):
     __tablename__ = "loan_snapshots"
@@ -98,6 +102,10 @@ class LoanSnapshot(Base):
 
     loan: Mapped["Loan"] = relationship(back_populates="snapshots")
     filing: Mapped["Filing"] = relationship(back_populates="snapshots")
+
+    __table_args__ = (
+        Index("uq_snapshots_loan_filing", "loan_id", "filing_id", unique=True),
+    )
 
 
 class CikMapping(Base):
