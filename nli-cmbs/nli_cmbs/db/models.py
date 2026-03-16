@@ -76,13 +76,23 @@ class Loan(Base):
     lien_position: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
+    # Pari passu / A-B note linking: "1A", "1B" → parent "1"
+    parent_loan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("loans.id", ondelete="SET NULL"), nullable=True
+    )
+
     deal: Mapped["Deal"] = relationship(back_populates="loans")
+    parent_loan: Mapped["Loan | None"] = relationship(
+        back_populates="child_loans", remote_side="Loan.id"
+    )
+    child_loans: Mapped[list["Loan"]] = relationship(back_populates="parent_loan")
     snapshots: Mapped[list["LoanSnapshot"]] = relationship(back_populates="loan", cascade="all, delete-orphan")
     properties: Mapped[list["Property"]] = relationship(back_populates="loan", cascade="all, delete-orphan")
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(back_populates="loan")
 
     __table_args__ = (
         Index("uq_loans_deal_prospectus", "deal_id", "prospectus_loan_id", unique=True),
+        Index("ix_loans_parent_loan_id", "parent_loan_id"),
     )
 
 
