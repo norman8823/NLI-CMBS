@@ -16,7 +16,7 @@ async def _make_session() -> tuple[AsyncSession, object]:
     """Create a fresh engine+session per test to avoid connection pool conflicts."""
     from nli_cmbs.config import settings
 
-    engine = create_async_engine(settings.database_url, pool_size=1)
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=1)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     session = factory()
     return session, engine

@@ -342,6 +342,527 @@ def parse_xml(filepath: str = typer.Argument(..., help="Path to EX-102 XML file"
     console.print(table)
 
 
+@app.command(name="report-all")
+def report_all(
+    output: str = typer.Option("reports", help="Output directory for report files"),
+    regenerate: bool = typer.Option(False, help="Force regenerate even if cached"),
+):
+    """Generate surveillance reports for all ingested deals."""
+    asyncio.run(_report_all(output, regenerate))
+
+
+async def _report_all(output_dir: str, regenerate: bool) -> None:
+    import time
+    from pathlib import Path
+
+    from nli_cmbs.ai.client import get_anthropic_client
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.deal_service import DealService
+    from nli_cmbs.services.report_service import ReportService
+
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    ai_client = get_anthropic_client()
+    generated = 0
+    failed = 0
+    start = time.time()
+
+    async with async_session_factory() as session:
+        deal_service = DealService(session)
+        deals = await deal_service.list_all()
+
+        if not deals:
+            console.print("[yellow]No deals found in database.[/yellow]")
+            return
+
+        console.print(f"[bold]Found {len(deals)} deals. Generating reports...[/bold]\n")
+
+        service = ReportService(session, ai_client, deal_service)
+        for deal in deals:
+            ticker = deal.ticker
+            console.print(f"  [{generated + failed + 1}/{len(deals)}] {ticker}...", end=" ")
+            try:
+                result = await service.generate_surveillance_report(ticker, regenerate=regenerate)
+                # Save as markdown file
+                filename = ticker.replace(" ", "_") + ".md"
+                filepath = out_path / filename
+                filepath.write_text(result.report_text)
+                console.print(f"[green]OK[/green] → {filepath}")
+                generated += 1
+            except Exception as e:
+                console.print(f"[red]FAILED[/red] — {e}")
+                failed += 1
+
+    elapsed = time.time() - start
+    console.print(f"\n[bold]Summary:[/bold] {generated} generated, {failed} failed, {elapsed:.1f}s total")
+
+
+@app.command()
+def report(ticker: str = typer.Argument(..., help="Deal ticker, e.g. 'BMARK 2024-V6'")):
+    """Generate a surveillance report for a CMBS deal."""
+    asyncio.run(_report(ticker))
+
+
+async def _report(ticker: str) -> None:
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+
+    from nli_cmbs.ai.client import get_anthropic_client
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.deal_service import DealService
+    from nli_cmbs.services.report_service import DealNotFoundError, ReportService
+
+    ai_client = get_anthropic_client()
+    async with async_session_factory() as session:
+        service = ReportService(session, ai_client, DealService(session))
+        try:
+            console.print(f"\n[bold]Generating surveillance report for:[/bold] {ticker}")
+            console.print("[dim]This may take 30-60 seconds on first run...[/dim]\n")
+            result = await service.generate_surveillance_report(ticker)
+        except DealNotFoundError:
+            console.print(f"[red]Deal not found:[/red] {ticker}")
+            raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Report generation failed:[/red] {e}")
+            raise typer.Exit(1)
+
+    if result.cached:
+        console.print("[yellow]Returned cached report[/yellow]\n")
+
+    console.print(Panel(
+        Markdown(result.report_text),
+        title=f"Surveillance Report — {result.deal_ticker}",
+        subtitle=f"Model: {result.model_used} | Filing: {result.filing_date} | Accession: {result.accession_number}",
+    ))
+
+
+@app.command(name="ingest-all")
+def ingest_all(
+    delay: float = typer.Option(1.0, help="Delay in seconds between EDGAR requests (SEC rate limit)"),
+    limit: int = typer.Option(0, help="Max deals to ingest (0 = all)"),
+    skip_parsed: bool = typer.Option(True, help="Skip deals that already have parsed filings"),
+):
+    """Bulk ingest all known deals from existing CIK mappings (Kaggle 2015-2023)."""
+    asyncio.run(_ingest_all(delay, limit, skip_parsed))
+
+
+async def _ingest_all(delay: float, limit: int, skip_parsed: bool) -> None:
+    import time
+
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import CikMapping, Deal, Filing
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.deal_service import DealService
+
+    start = time.time()
+
+    # ── Step 1: Load deal-level CIK mappings from DB ──
+    console.print("[bold]Step 1:[/bold] Loading CIK mappings from DB...")
+    deals_to_ingest: list[dict] = []
+    seen_tickers: set[str] = set()
+
+    async with async_session_factory() as session:
+        stmt = select(CikMapping).where(
+            CikMapping.source.notin_(["seed_depositor", "depositor_seed"])
+        )
+        result = await session.execute(stmt)
+        db_mappings = list(result.scalars().all())
+
+        for m in db_mappings:
+            if m.deal_ticker in seen_tickers:
+                continue
+            if "-DEPOSITOR" in m.deal_ticker.upper():
+                continue
+            seen_tickers.add(m.deal_ticker)
+            deals_to_ingest.append({
+                "ticker": m.deal_ticker,
+                "trust_name": m.trust_name,
+            })
+
+        console.print(f"  Found {len(deals_to_ingest)} deals from CIK mappings")
+
+        # Filter out already-parsed deals
+        parsed_tickers: set[str] = set()
+        if skip_parsed:
+            stmt = (
+                select(Deal.ticker)
+                .join(Filing, Filing.deal_id == Deal.id)
+                .where(Filing.parsed.is_(True))
+            )
+            result = await session.execute(stmt)
+            parsed_tickers = {row[0] for row in result.all()}
+
+    deals_to_ingest.sort(key=lambda d: d["ticker"])
+    if limit > 0:
+        deals_to_ingest = deals_to_ingest[:limit]
+        console.print(f"  Limited to first {limit} deals")
+
+    to_ingest = [d for d in deals_to_ingest if d["ticker"] not in parsed_tickers]
+    if parsed_tickers:
+        console.print(
+            f"  Skipping {len(deals_to_ingest) - len(to_ingest)} already-parsed deals"
+        )
+    console.print(f"  [bold]{len(to_ingest)} deals to ingest[/bold]\n")
+
+    if not to_ingest:
+        console.print("[yellow]Nothing to ingest.[/yellow]")
+        return
+
+    # ── Step 2: Run full pipeline for each deal ──
+    console.print("[bold]Step 2:[/bold] Running ingest pipeline...\n")
+    success, failed, skipped = 0, 0, 0
+    errors_list: list[tuple[str, str]] = []
+
+    for i, deal_info in enumerate(to_ingest):
+        ticker = deal_info["ticker"]
+        console.print(f"  [{i + 1}/{len(to_ingest)}] {ticker}...", end=" ")
+
+        try:
+            async with async_session_factory() as session:
+                svc = DealService(session)
+                result = await svc.scan_deal(ticker)
+
+                if result.errors:
+                    console.print(f"[red]FAILED[/red] — {result.errors[0]}")
+                    errors_list.append((ticker, result.errors[0]))
+                    failed += 1
+                elif result.already_parsed:
+                    console.print("[yellow]SKIP[/yellow] (already parsed)")
+                    skipped += 1
+                else:
+                    console.print(
+                        f"[green]OK[/green] — {result.loans_created} loans, "
+                        f"{result.snapshots_created} snapshots"
+                    )
+                    success += 1
+        except Exception as e:
+            console.print(f"[red]ERROR[/red] — {e}")
+            errors_list.append((ticker, str(e)))
+            failed += 1
+
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    elapsed = time.time() - start
+    _print_ingest_summary(len(deals_to_ingest), success, skipped, failed, elapsed, errors_list)
+
+
+@app.command(name="discover")
+def discover(
+    delay: float = typer.Option(1.5, help="Delay in seconds between EDGAR requests (SEC rate limit)"),
+    limit: int = typer.Option(0, help="Max deals to ingest (0 = all)"),
+    skip_parsed: bool = typer.Option(True, help="Skip deals that already have parsed filings"),
+):
+    """Discover and ingest new CMBS deals (2024+) from EDGAR depositor submissions."""
+    asyncio.run(_discover(delay, limit, skip_parsed))
+
+
+async def _discover(delay: float, limit: int, skip_parsed: bool) -> None:
+    import re
+    import time
+    from collections import defaultdict
+
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import CikMapping, Deal, Filing
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.edgar.client import EdgarClient
+    from nli_cmbs.edgar.seed_data import CMBS_SHELVES
+    from nli_cmbs.services.deal_service import DealService
+
+    start = time.time()
+
+    # Build regex patterns from seed data trust name patterns
+    patterns: dict[str, tuple] = {}
+    for shelf, info in CMBS_SHELVES.items():
+        pattern = info["trust_name_pattern"]
+        regex_str = (
+            re.escape(pattern)
+            .replace(r"\{year\}", r"(\d{4})")
+            .replace(r"\{series\}", r"([A-Z0-9]+)")
+        )
+        patterns[shelf] = (re.compile(regex_str, re.IGNORECASE), info)
+
+    # Load existing tickers to skip duplicates
+    async with async_session_factory() as session:
+        stmt = select(CikMapping.deal_ticker)
+        result = await session.execute(stmt)
+        existing_tickers = {row[0] for row in result.all()}
+
+    console.print(f"  {len(existing_tickers)} deals already known in DB")
+
+    # ── Step 1: Query depositor CIK submissions for ABS-EE filings ──
+    console.print("\n[bold]Step 1:[/bold] Querying depositor CIKs for new ABS-EE filings...")
+
+    cik_to_shelves: dict[str, list[str]] = defaultdict(list)
+    for shelf, info in CMBS_SHELVES.items():
+        for cik in info["depositor_ciks"]:
+            cik_to_shelves[cik].append(shelf)
+
+    unique_ciks = sorted(cik_to_shelves.keys())
+    console.print(f"  Scanning {len(unique_ciks)} depositor CIKs...")
+
+    # Group ABS-EE filings by fileNumber (each = a distinct deal registration)
+    file_num_to_info: dict[str, dict] = {}
+
+    client = EdgarClient()
+    try:
+        for cik in unique_ciks:
+            try:
+                subs = await client.get_submissions(cik)
+            except Exception as e:
+                console.print(f"  [red]CIK {cik}: {e}[/red]")
+                await asyncio.sleep(delay)
+                continue
+
+            entity_name = subs.get("name", "")
+            console.print(f"  [dim]CIK {cik}: {entity_name}[/dim]")
+
+            recent = subs.get("filings", {}).get("recent", {})
+            forms = recent.get("form", [])
+            accessions = recent.get("accessionNumber", [])
+            dates = recent.get("filingDate", [])
+            file_numbers = recent.get("fileNumber", [])
+
+            for i, form in enumerate(forms):
+                if form != "ABS-EE":
+                    continue
+                fn = file_numbers[i] if i < len(file_numbers) else ""
+                if not fn:
+                    continue
+                if fn not in file_num_to_info or dates[i] > file_num_to_info[fn]["date"]:
+                    file_num_to_info[fn] = {
+                        "depositor_cik": cik,
+                        "accession": accessions[i],
+                        "date": dates[i],
+                        "entity_name": entity_name,
+                    }
+
+            await asyncio.sleep(delay)
+
+        console.print(
+            f"  Found {len(file_num_to_info)} deal registrations (file numbers)"
+        )
+
+        # ── Step 2: Resolve trust names from filing index pages ──
+        console.print(
+            "\n[bold]Step 2:[/bold] Resolving new deal names from filing indexes..."
+        )
+        discovered: list[dict] = []
+
+        for fn, info in file_num_to_info.items():
+            acc = info["accession"]
+            dep_cik = info["depositor_cik"]
+
+            try:
+                trust_name, trust_cik = await _extract_trust_from_index(
+                    client, dep_cik, acc
+                )
+            except Exception:
+                console.print(f"  [dim]Could not read index for {acc}[/dim]")
+                await asyncio.sleep(delay)
+                continue
+
+            if not trust_name:
+                await asyncio.sleep(delay)
+                continue
+
+            # Match trust name against shelf patterns to derive ticker
+            ticker = None
+            matched_shelf = None
+            for shelf, (regex, shelf_info) in patterns.items():
+                m = regex.search(trust_name)
+                if m:
+                    year, series = m.group(1), m.group(2)
+                    ticker = f"{shelf} {year}-{series}"
+                    matched_shelf = shelf
+                    break
+
+            if not ticker or ticker in existing_tickers:
+                await asyncio.sleep(delay)
+                continue
+
+            existing_tickers.add(ticker)
+            discovered.append({
+                "ticker": ticker,
+                "trust_name": trust_name,
+                "trust_cik": trust_cik or "",
+                "shelf": matched_shelf,
+                "depositor_cik": dep_cik.lstrip("0") or "0",
+                "depositor_name": CMBS_SHELVES.get(matched_shelf, {}).get(
+                    "depositor_name", ""
+                ),
+            })
+            console.print(f"  [green]{ticker}[/green] ← {trust_name}")
+            await asyncio.sleep(delay)
+
+    finally:
+        await client.close()
+
+    discovered.sort(key=lambda d: d["ticker"])
+    console.print(f"\n  [bold]Discovered {len(discovered)} new deals[/bold]")
+
+    if not discovered:
+        console.print("[yellow]No new deals found.[/yellow]")
+        return
+
+    if limit > 0:
+        discovered = discovered[:limit]
+        console.print(f"  Limited to first {limit} deals")
+
+    # ── Step 3: Save CIK mappings and filter already-parsed ──
+    console.print(f"\n[bold]Step 3:[/bold] Saving CIK mappings...")
+    async with async_session_factory() as session:
+        for d in discovered:
+            stmt = select(CikMapping).where(
+                CikMapping.deal_ticker.ilike(d["ticker"])
+            )
+            result = await session.execute(stmt)
+            if not result.scalar_one_or_none():
+                session.add(CikMapping(
+                    deal_ticker=d["ticker"],
+                    trust_name=d["trust_name"],
+                    depositor_cik=d["depositor_cik"],
+                    trust_cik=d["trust_cik"],
+                    issuer_shelf=d["shelf"],
+                    depositor_name=d["depositor_name"],
+                    verified=True,
+                    source="depositor_discovery",
+                ))
+        await session.commit()
+
+        parsed_tickers: set[str] = set()
+        if skip_parsed:
+            stmt = (
+                select(Deal.ticker)
+                .join(Filing, Filing.deal_id == Deal.id)
+                .where(Filing.parsed.is_(True))
+            )
+            result = await session.execute(stmt)
+            parsed_tickers = {row[0] for row in result.all()}
+
+    to_ingest = [d for d in discovered if d["ticker"] not in parsed_tickers]
+    if parsed_tickers:
+        console.print(
+            f"  Skipping {len(discovered) - len(to_ingest)} already-parsed deals"
+        )
+    console.print(f"  [bold]{len(to_ingest)} new deals to ingest[/bold]\n")
+
+    if not to_ingest:
+        console.print("[yellow]All discovered deals already ingested.[/yellow]")
+        return
+
+    # ── Step 4: Run full pipeline for each deal ──
+    console.print("[bold]Step 4:[/bold] Running ingest pipeline...\n")
+    success, failed, skipped = 0, 0, 0
+    errors_list: list[tuple[str, str]] = []
+
+    for i, deal_info in enumerate(to_ingest):
+        ticker = deal_info["ticker"]
+        console.print(f"  [{i + 1}/{len(to_ingest)}] {ticker}...", end=" ")
+
+        try:
+            async with async_session_factory() as session:
+                svc = DealService(session)
+                result = await svc.scan_deal(ticker)
+
+                if result.errors:
+                    console.print(f"[red]FAILED[/red] — {result.errors[0]}")
+                    errors_list.append((ticker, result.errors[0]))
+                    failed += 1
+                elif result.already_parsed:
+                    console.print("[yellow]SKIP[/yellow] (already parsed)")
+                    skipped += 1
+                else:
+                    console.print(
+                        f"[green]OK[/green] — {result.loans_created} loans, "
+                        f"{result.snapshots_created} snapshots"
+                    )
+                    success += 1
+        except Exception as e:
+            console.print(f"[red]ERROR[/red] — {e}")
+            errors_list.append((ticker, str(e)))
+            failed += 1
+
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    elapsed = time.time() - start
+    _print_ingest_summary(len(discovered), success, skipped, failed, elapsed, errors_list)
+
+
+def _print_ingest_summary(
+    total: int, success: int, skipped: int, failed: int,
+    elapsed: float, errors_list: list[tuple[str, str]],
+) -> None:
+    console.print(f"\n{'=' * 60}")
+    console.print("[bold]Ingest Summary[/bold]")
+    console.print(f"  Total:       {total}")
+    console.print(f"  Ingested:    {success}")
+    console.print(f"  Skipped:     {skipped}")
+    console.print(f"  Failed:      {failed}")
+    console.print(f"  Time:        {elapsed:.1f}s")
+    if errors_list:
+        console.print(f"\n[red]Failures (showing first 20):[/red]")
+        for ticker, err in errors_list[:20]:
+            console.print(f"  {ticker}: {err}")
+    console.print(f"{'=' * 60}")
+
+
+async def _extract_trust_from_index(
+    client, depositor_cik: str, accession: str
+) -> tuple[str | None, str | None]:
+    """Fetch a filing index page and extract the trust entity name and CIK.
+
+    Returns (trust_name, trust_cik) or (None, None) if not found.
+    """
+    import re
+
+    from lxml import html
+
+    cik_num = str(int(depositor_cik))
+    acc_no_dashes = accession.replace("-", "")
+    index_url = (
+        f"https://www.sec.gov/Archives/edgar/data/"
+        f"{cik_num}/{acc_no_dashes}/{accession}-index.htm"
+    )
+
+    response = await client.download_filing_document(index_url)
+    tree = html.fromstring(response)
+
+    # The filing index page lists filers. Look for the trust entity
+    # (the one that isn't the depositor, typically contains "Trust" in the name).
+    text = tree.text_content()
+    trust_name = None
+    trust_cik = None
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # Look for lines like "Benchmark 2024-V6 Mortgage Trust  (Filer)"
+        # or "BANK5 2024-5YR11 MORTGAGE TRUST  (Filer)"
+        if "(filer)" in line.lower() and "trust" in line.lower():
+            trust_name = re.sub(r"\s*\(Filer\)\s*$", "", line, flags=re.IGNORECASE).strip()
+            break
+
+    # Try to extract CIK from the page for the trust entity
+    if trust_name:
+        # Look for CIK link near the trust name
+        for link in tree.xpath("//a[contains(@href, 'browse-edgar')]"):
+            href = link.get("href", "")
+            link_text = link.text_content().strip()
+            if "CIK" in href and trust_name[:20].lower() in link_text.lower():
+                m = re.search(r"CIK=(\d+)", href)
+                if m:
+                    trust_cik = m.group(1)
+                break
+
+    return trust_name, trust_cik
+
+
 @app.command()
 def health():
     """Check API health."""

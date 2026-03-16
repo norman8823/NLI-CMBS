@@ -22,6 +22,7 @@ dependencies = [
     "typer",
     "rich",
     "python-dotenv",
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]

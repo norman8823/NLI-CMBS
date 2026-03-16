@@ -19,10 +19,8 @@ services:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://nli:nli@postgres:5432/nli_cmbs
-      EDGAR_USER_AGENT: "NLIntelligence/1.0 (contact@nlintelligence.com)"
-      EDGAR_BASE_URL: https://data.sec.gov
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

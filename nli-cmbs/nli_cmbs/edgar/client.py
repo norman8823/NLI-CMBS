@@ -32,8 +32,8 @@ _BACKOFF_BASE = 1.0
 class EdgarClient:
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(
-            base_url=settings.edgar_base_url,
-            headers={"User-Agent": settings.edgar_user_agent, "Accept": "application/json"},
+            base_url=settings.EDGAR_BASE_URL,
+            headers={"User-Agent": settings.EDGAR_USER_AGENT, "Accept": "application/json"},
             timeout=30.0,
         )
         self._semaphore = asyncio.Semaphore(10)

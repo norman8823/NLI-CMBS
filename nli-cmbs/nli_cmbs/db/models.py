@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -28,6 +28,7 @@ class Deal(Base):
     filings: Mapped[list["Filing"]] = relationship(back_populates="deal", cascade="all, delete-orphan")
     loans: Mapped[list["Loan"]] = relationship(back_populates="deal", cascade="all, delete-orphan")
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(back_populates="deal")
+    reports: Mapped[list["Report"]] = relationship(back_populates="deal")
 
 
 class Filing(Base):
@@ -62,11 +63,14 @@ class Loan(Base):
     original_term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     original_amortization_term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     original_interest_rate: Mapped[float | None] = mapped_column(Numeric(8, 6), nullable=True)
+    # Primary property info (for single-property loans or summary for multi-property)
     property_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     property_name: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     property_city: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     property_state: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
     borrower_name: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    # Multi-property indicator
+    property_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     interest_only_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     balloon_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     lien_position: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -74,10 +78,80 @@ class Loan(Base):
 
     deal: Mapped["Deal"] = relationship(back_populates="loans")
     snapshots: Mapped[list["LoanSnapshot"]] = relationship(back_populates="loan", cascade="all, delete-orphan")
+    properties: Mapped[list["Property"]] = relationship(back_populates="loan", cascade="all, delete-orphan")
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(back_populates="loan")
 
     __table_args__ = (
         Index("uq_loans_deal_prospectus", "deal_id", "prospectus_loan_id", unique=True),
+    )
+
+
+class Property(Base):
+    """Individual property within a loan (for multi-property loans).
+    
+    For single-property loans, property info is stored directly on the Loan.
+    For multi-property loans (property_count > 1), each property gets a row here.
+    
+    Property IDs follow the format "{loan_id}-{property_index}" e.g., "1-001", "1-002".
+    """
+    __tablename__ = "properties"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    loan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("loans.id", ondelete="CASCADE"), nullable=False)
+    property_id: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., "1-001"
+    
+    # Property identification
+    property_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    property_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    property_city: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    property_state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    property_zip: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    property_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    property_type_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    
+    # Physical characteristics
+    net_rentable_sq_ft: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    year_built: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    
+    # Valuation
+    valuation_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    valuation_securitization_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    
+    # Occupancy
+    occupancy_securitization: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
+    occupancy_most_recent: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
+    
+    # NOI / NCF
+    noi_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    noi_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    ncf_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    ncf_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    
+    # DSCR
+    dscr_noi_securitization: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    dscr_noi_most_recent: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    dscr_ncf_securitization: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    dscr_ncf_most_recent: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    
+    # Financials
+    revenue_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    operating_expenses_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    
+    # Tenants
+    largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    second_largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    third_largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+    loan: Mapped["Loan"] = relationship(back_populates="properties")
+
+    __table_args__ = (
+        Index("ix_properties_loan_id", "loan_id"),
+        Index("ix_properties_property_name", "property_name"),
+        Index("ix_properties_property_city", "property_city"),
+        Index("ix_properties_property_state", "property_state"),
+        Index("uq_properties_loan_property_id", "loan_id", "property_id", unique=True),
     )
 
 
@@ -106,7 +180,7 @@ class LoanSnapshot(Base):
     dscr_ncf: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     noi: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     ncf: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
-    occupancy: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    occupancy: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
     revenue: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     operating_expenses: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     debt_service: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
@@ -116,7 +190,7 @@ class LoanSnapshot(Base):
     dscr_ncf_at_securitization: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     noi_at_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     ncf_at_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
-    occupancy_at_securitization: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    occupancy_at_securitization: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
     appraised_value_at_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
@@ -179,3 +253,20 @@ class WatchlistItem(Base):
     loan: Mapped["Loan | None"] = relationship(back_populates="watchlist_items")
     deal: Mapped["Deal | None"] = relationship(back_populates="watchlist_items")
     last_checked_filing: Mapped["Filing | None"] = relationship(foreign_keys=[last_checked_filing_id])
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False)
+    filing_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("filings.id"), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(50), default="surveillance")
+    report_text: Mapped[str] = mapped_column(Text, nullable=False)
+    model_used: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+    deal: Mapped["Deal"] = relationship(back_populates="reports")
+    filing: Mapped["Filing"] = relationship()

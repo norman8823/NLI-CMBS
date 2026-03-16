@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nli_cmbs.db.models import Deal, Filing, Loan, LoanSnapshot
+from nli_cmbs.db.models import Deal, Filing, Loan, LoanSnapshot, Property
 from nli_cmbs.edgar.xml_parser import Ex102Parser
-from nli_cmbs.schemas.parsed_loan import ParsedFiling
+from nli_cmbs.schemas.parsed_loan import ParsedFiling, ParsedProperty
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ class IngestResult:
     loans_created: int = 0
     loans_updated: int = 0
     snapshots_created: int = 0
+    properties_created: int = 0
     parse_errors: int = 0
     errors: list[str] = field(default_factory=list)
     already_parsed: bool = False
@@ -42,15 +43,23 @@ class IngestService:
             filing_accession=filing.accession_number,
         )
 
-        # Idempotency: skip if already parsed
+        # Idempotency: skip if already fully parsed (loans AND properties exist)
         if filing.parsed:
-            result.already_parsed = True
-            result.reporting_period = (
-                f"{filing.reporting_period_start} to {filing.reporting_period_end}"
-                if filing.reporting_period_start
-                else None
+            # Check if deal's loans are missing properties
+            missing_properties = await self._deal_missing_properties(deal)
+            if not missing_properties:
+                result.already_parsed = True
+                result.reporting_period = (
+                    f"{filing.reporting_period_start} to {filing.reporting_period_end}"
+                    if filing.reporting_period_start
+                    else None
+                )
+                return result
+            # Loans exist but properties are missing — continue to backfill
+            logger.info(
+                "Deal %s has loans but no properties — backfilling properties",
+                deal.ticker,
             )
-            return result
 
         # Parse XML
         parser = Ex102Parser()
@@ -64,7 +73,7 @@ class IngestService:
                 f"{parsed.reporting_period_start} to {parsed.reporting_period_end}"
             )
 
-        # Upsert loans and create snapshots
+        # Upsert loans, create snapshots, and create properties
         await self._persist_loans(deal, filing, parsed, result)
 
         # Update filing
@@ -100,11 +109,15 @@ class IngestService:
         for loan_data in parsed.loans:
             lid = loan_data.prospectus_loan_id
             snapshot_data = parsed.snapshots.get(lid)
+            property_list = parsed.properties.get(lid, [])
 
             if lid in loan_map:
                 # Update existing loan
                 db_loan = loan_map[lid]
                 self._update_loan(db_loan, loan_data)
+                # Update property count if we have properties
+                if property_list:
+                    db_loan.property_count = len(property_list)
                 result.loans_updated += 1
             else:
                 # Create new loan
@@ -128,6 +141,7 @@ class IngestService:
                     property_city=loan_data.property_city,
                     property_state=loan_data.property_state,
                     borrower_name=loan_data.borrower_name,
+                    property_count=len(property_list) if property_list else 1,
                     interest_only_indicator=loan_data.interest_only_indicator,
                     balloon_indicator=loan_data.balloon_indicator,
                     lien_position=loan_data.lien_position,
@@ -147,54 +161,127 @@ class IngestService:
                     LoanSnapshot.filing_id == filing.id,
                 )
                 existing_snap = await self._session.execute(snap_stmt)
-                if existing_snap.scalar_one_or_none():
-                    continue
+                if not existing_snap.scalar_one_or_none():
+                    snap = LoanSnapshot(
+                        loan_id=db_loan.id,
+                        filing_id=filing.id,
+                        reporting_period_begin_date=snapshot_data.reporting_period_begin_date or date.min,
+                        reporting_period_end_date=snapshot_data.reporting_period_end_date or date.min,
+                        beginning_balance=float(snapshot_data.beginning_balance or 0),
+                        ending_balance=float(snapshot_data.ending_balance or 0),
+                        current_interest_rate=float(snapshot_data.current_interest_rate or 0),
+                        scheduled_interest_amount=self._to_float(snapshot_data.scheduled_interest_amount),
+                        scheduled_principal_amount=self._to_float(snapshot_data.scheduled_principal_amount),
+                        actual_interest_collected=self._to_float(snapshot_data.actual_interest_collected),
+                        actual_principal_collected=self._to_float(snapshot_data.actual_principal_collected),
+                        actual_other_collected=self._to_float(snapshot_data.actual_other_collected),
+                        servicer_advanced_amount=self._to_float(snapshot_data.servicer_advanced_amount),
+                        delinquency_status=snapshot_data.delinquency_status,
+                        interest_paid_through_date=snapshot_data.interest_paid_through_date,
+                        next_payment_amount_due=self._to_float(snapshot_data.next_payment_amount_due),
+                        # Credit metrics — current/mostRecent
+                        dscr_noi=self._to_float(snapshot_data.dscr_noi),
+                        dscr_ncf=self._to_float(snapshot_data.dscr_ncf),
+                        noi=self._to_float(snapshot_data.noi),
+                        ncf=self._to_float(snapshot_data.ncf),
+                        occupancy=self._to_float(snapshot_data.occupancy),
+                        revenue=self._to_float(snapshot_data.revenue),
+                        operating_expenses=self._to_float(snapshot_data.operating_expenses),
+                        debt_service=self._to_float(snapshot_data.debt_service),
+                        appraised_value=self._to_float(snapshot_data.appraised_value),
+                        # Credit metrics — securitization-time
+                        dscr_noi_at_securitization=self._to_float(
+                            snapshot_data.dscr_noi_at_securitization
+                        ),
+                        dscr_ncf_at_securitization=self._to_float(
+                            snapshot_data.dscr_ncf_at_securitization
+                        ),
+                        noi_at_securitization=self._to_float(snapshot_data.noi_at_securitization),
+                        ncf_at_securitization=self._to_float(snapshot_data.ncf_at_securitization),
+                        occupancy_at_securitization=self._to_float(
+                            snapshot_data.occupancy_at_securitization
+                        ),
+                        appraised_value_at_securitization=self._to_float(
+                            snapshot_data.appraised_value_at_securitization
+                        ),
+                    )
+                    self._session.add(snap)
+                    result.snapshots_created += 1
 
-                snap = LoanSnapshot(
-                    loan_id=db_loan.id,
-                    filing_id=filing.id,
-                    reporting_period_begin_date=snapshot_data.reporting_period_begin_date or date.min,
-                    reporting_period_end_date=snapshot_data.reporting_period_end_date or date.min,
-                    beginning_balance=float(snapshot_data.beginning_balance or 0),
-                    ending_balance=float(snapshot_data.ending_balance or 0),
-                    current_interest_rate=float(snapshot_data.current_interest_rate or 0),
-                    scheduled_interest_amount=self._to_float(snapshot_data.scheduled_interest_amount),
-                    scheduled_principal_amount=self._to_float(snapshot_data.scheduled_principal_amount),
-                    actual_interest_collected=self._to_float(snapshot_data.actual_interest_collected),
-                    actual_principal_collected=self._to_float(snapshot_data.actual_principal_collected),
-                    actual_other_collected=self._to_float(snapshot_data.actual_other_collected),
-                    servicer_advanced_amount=self._to_float(snapshot_data.servicer_advanced_amount),
-                    delinquency_status=snapshot_data.delinquency_status,
-                    interest_paid_through_date=snapshot_data.interest_paid_through_date,
-                    next_payment_amount_due=self._to_float(snapshot_data.next_payment_amount_due),
-                    # Credit metrics — current/mostRecent
-                    dscr_noi=self._to_float(snapshot_data.dscr_noi),
-                    dscr_ncf=self._to_float(snapshot_data.dscr_ncf),
-                    noi=self._to_float(snapshot_data.noi),
-                    ncf=self._to_float(snapshot_data.ncf),
-                    occupancy=self._to_float(snapshot_data.occupancy),
-                    revenue=self._to_float(snapshot_data.revenue),
-                    operating_expenses=self._to_float(snapshot_data.operating_expenses),
-                    debt_service=self._to_float(snapshot_data.debt_service),
-                    appraised_value=self._to_float(snapshot_data.appraised_value),
-                    # Credit metrics — securitization-time
-                    dscr_noi_at_securitization=self._to_float(
-                        snapshot_data.dscr_noi_at_securitization
-                    ),
-                    dscr_ncf_at_securitization=self._to_float(
-                        snapshot_data.dscr_ncf_at_securitization
-                    ),
-                    noi_at_securitization=self._to_float(snapshot_data.noi_at_securitization),
-                    ncf_at_securitization=self._to_float(snapshot_data.ncf_at_securitization),
-                    occupancy_at_securitization=self._to_float(
-                        snapshot_data.occupancy_at_securitization
-                    ),
-                    appraised_value_at_securitization=self._to_float(
-                        snapshot_data.appraised_value_at_securitization
-                    ),
-                )
-                self._session.add(snap)
-                result.snapshots_created += 1
+            # Create properties (multi-property from X-NNN assets, or single-property inline)
+            if property_list:
+                await self._persist_properties(db_loan, property_list, result)
+
+    async def _persist_properties(
+        self,
+        loan: Loan,
+        property_list: list[ParsedProperty],
+        result: IngestResult,
+    ) -> None:
+        """Persist properties for a loan. Skips any that already exist by property_id."""
+        # Check for existing properties
+        stmt = select(Property.property_id).where(Property.loan_id == loan.id)
+        existing = await self._session.execute(stmt)
+        existing_ids = {row[0] for row in existing.all()}
+
+        for prop_data in property_list:
+            if prop_data.property_id in existing_ids:
+                # Property already exists, skip
+                continue
+
+            prop = Property(
+                loan_id=loan.id,
+                property_id=prop_data.property_id,
+                property_name=prop_data.property_name,
+                property_address=prop_data.property_address,
+                property_city=prop_data.property_city,
+                property_state=prop_data.property_state,
+                property_zip=prop_data.property_zip,
+                property_type=prop_data.property_type,
+                net_rentable_sq_ft=self._to_float(prop_data.net_rentable_sq_ft),
+                year_built=prop_data.year_built,
+                valuation_securitization=self._to_float(prop_data.valuation_securitization),
+                valuation_securitization_date=prop_data.valuation_securitization_date,
+                occupancy_securitization=self._to_float(prop_data.occupancy_securitization),
+                occupancy_most_recent=self._to_float(prop_data.occupancy_most_recent),
+                noi_securitization=self._to_float(prop_data.noi_securitization),
+                noi_most_recent=self._to_float(prop_data.noi_most_recent),
+                ncf_securitization=self._to_float(prop_data.ncf_securitization),
+                ncf_most_recent=self._to_float(prop_data.ncf_most_recent),
+                dscr_noi_securitization=self._to_float(prop_data.dscr_noi_securitization),
+                dscr_noi_most_recent=self._to_float(prop_data.dscr_noi_most_recent),
+                dscr_ncf_securitization=self._to_float(prop_data.dscr_ncf_securitization),
+                dscr_ncf_most_recent=self._to_float(prop_data.dscr_ncf_most_recent),
+                revenue_most_recent=self._to_float(prop_data.revenue_most_recent),
+                operating_expenses_most_recent=self._to_float(prop_data.operating_expenses_most_recent),
+                largest_tenant=prop_data.largest_tenant,
+                second_largest_tenant=prop_data.second_largest_tenant,
+                third_largest_tenant=prop_data.third_largest_tenant,
+            )
+            self._session.add(prop)
+            result.properties_created += 1
+
+    async def _deal_missing_properties(self, deal: Deal) -> bool:
+        """Return True if any loans in this deal are missing properties."""
+        # Single query: count total loans vs loans that have at least one property
+        loans_with_props = (
+            select(Property.loan_id)
+            .where(Property.loan_id == Loan.id)
+            .correlate(Loan)
+            .exists()
+        )
+        stmt = (
+            select(
+                func.count(Loan.id).label("total"),
+                func.count(Loan.id).filter(loans_with_props).label("with_props"),
+            )
+            .where(Loan.deal_id == deal.id)
+        )
+        row = (await self._session.execute(stmt)).one()
+        total, with_props = row.total, row.with_props
+        if total == 0:
+            return False
+        return with_props < total
 
     @staticmethod
     def _to_float(value: Decimal | None) -> float | None:
@@ -220,3 +307,6 @@ class IngestService:
             db_loan.balloon_indicator = loan_data.balloon_indicator
         if loan_data.lien_position and not db_loan.lien_position:
             db_loan.lien_position = loan_data.lien_position
+        # Update property count if provided
+        if hasattr(loan_data, 'property_count') and loan_data.property_count > 1:
+            db_loan.property_count = loan_data.property_count

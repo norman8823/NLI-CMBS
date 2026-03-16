@@ -18,7 +18,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 @pytest_asyncio.fixture
 async def db_session():
-    engine = create_async_engine(settings.database_url, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
