@@ -4,6 +4,11 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class BlurbResponse(BaseModel):
+    blurb: str
+    generated_at: str
+
+
 class SnapshotOut(BaseModel):
     ending_balance: float | None = None
     beginning_balance: float | None = None
@@ -35,6 +40,22 @@ class SnapshotOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PropertyOut(BaseModel):
+    property_name: str | None = None
+    property_city: str | None = None
+    property_state: str | None = None
+    property_type: str | None = None
+    property_type_source: str | None = None  # 'reported' | 'inferred'
+    net_rentable_sq_ft: float | None = None
+    year_built: int | None = None
+    valuation_securitization: float | None = None
+    occupancy_most_recent: float | None = None
+    noi_most_recent: float | None = None
+    largest_tenant: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class LoanOut(BaseModel):
     id: UUID
     deal_id: UUID
@@ -55,8 +76,15 @@ class LoanOut(BaseModel):
     interest_only_indicator: bool | None = None
     balloon_indicator: bool | None = None
     lien_position: str | None = None
+    property_count: int = 1
+    parent_loan_id: UUID | None = None
+    parent_prospectus_loan_id: str | None = None
+    properties: list[PropertyOut] = []
+    parent_properties: list[PropertyOut] = []
     created_at: datetime
     latest_snapshot: SnapshotOut | None = None
+    ai_blurb: str | None = None
+    ai_blurb_generated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

@@ -5,9 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from nli_cmbs.db.models import Deal, Filing, Loan, LoanSnapshot
+from nli_cmbs.ai.client import AnthropicClient, get_anthropic_client
+from nli_cmbs.db.models import Deal, Filing, Loan, LoanSnapshot, Property
 from nli_cmbs.db.session import get_session
-from nli_cmbs.schemas.loan import LoanOut, LoanSearchOut, SnapshotOut
+from nli_cmbs.schemas.loan import BlurbResponse, LoanOut, LoanSearchOut, PropertyOut, SnapshotOut
+from nli_cmbs.services.blurb_service import generate_loan_blurb
 
 router = APIRouter()
 
@@ -49,7 +51,33 @@ def _latest_snapshot(loan: Loan) -> SnapshotOut | None:
     )
 
 
+def _property_to_out(prop: Property) -> PropertyOut:
+    return PropertyOut(
+        property_name=prop.property_name,
+        property_city=prop.property_city,
+        property_state=prop.property_state,
+        property_type=prop.property_type,
+        property_type_source=prop.property_type_source,
+        net_rentable_sq_ft=_to_float(prop.net_rentable_sq_ft),
+        year_built=prop.year_built,
+        valuation_securitization=_to_float(prop.valuation_securitization),
+        occupancy_most_recent=_to_float(prop.occupancy_most_recent),
+        noi_most_recent=_to_float(prop.noi_most_recent),
+        largest_tenant=prop.largest_tenant,
+    )
+
+
 def _loan_to_out(loan: Loan) -> LoanOut:
+    properties = [_property_to_out(p) for p in loan.properties] if loan.properties else []
+
+    # For A/B notes, include parent's properties
+    parent_properties: list[PropertyOut] = []
+    parent_prospectus_id: str | None = None
+    if loan.parent_loan_id and loan.parent_loan:
+        parent_prospectus_id = loan.parent_loan.prospectus_loan_id
+        if loan.parent_loan.properties:
+            parent_properties = [_property_to_out(p) for p in loan.parent_loan.properties]
+
     return LoanOut(
         id=loan.id,
         deal_id=loan.deal_id,
@@ -70,8 +98,15 @@ def _loan_to_out(loan: Loan) -> LoanOut:
         interest_only_indicator=loan.interest_only_indicator,
         balloon_indicator=loan.balloon_indicator,
         lien_position=loan.lien_position,
+        property_count=loan.property_count,
+        parent_loan_id=loan.parent_loan_id,
+        parent_prospectus_loan_id=parent_prospectus_id,
+        properties=properties,
+        parent_properties=parent_properties,
         created_at=loan.created_at,
         latest_snapshot=_latest_snapshot(loan),
+        ai_blurb=loan.ai_blurb,
+        ai_blurb_generated_at=loan.ai_blurb_generated_at,
     )
 
 
@@ -136,7 +171,11 @@ async def list_loans_by_ticker(
 
     stmt = (
         select(Loan)
-        .options(selectinload(Loan.snapshots))
+        .options(
+            selectinload(Loan.snapshots),
+            selectinload(Loan.properties),
+            selectinload(Loan.parent_loan).selectinload(Loan.properties),
+        )
         .where(Loan.deal_id == deal.id)
     )
 
@@ -179,3 +218,15 @@ async def list_loans_by_ticker(
     loans = result.scalars().all()
 
     return [_loan_to_out(loan) for loan in loans]
+
+
+@router.get("/{loan_id}/blurb", response_model=BlurbResponse)
+async def get_loan_blurb(
+    loan_id: str,
+    session: AsyncSession = Depends(get_session),
+    ai_client: AnthropicClient = Depends(get_anthropic_client),
+):
+    result = await generate_loan_blurb(session, ai_client, loan_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return result

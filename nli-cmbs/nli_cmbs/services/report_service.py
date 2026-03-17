@@ -162,7 +162,9 @@ class ReportService:
     async def _get_top_loans(self, deal_id, filing_id, limit: int = 10) -> list[dict]:
         stmt = (
             select(
+                Loan.prospectus_loan_id,
                 Loan.property_name,
+                Loan.property_type,
                 Loan.property_city,
                 Loan.property_state,
                 Loan.maturity_date,
@@ -178,7 +180,9 @@ class ReportService:
         rows = (await self._db.execute(stmt)).all()
         return [
             {
+                "prospectus_loan_id": row.prospectus_loan_id or "N/A",
                 "property_name": row.property_name or "N/A",
+                "property_type": row.property_type or "N/A",
                 "city": row.property_city or "N/A",
                 "state": row.property_state or "N/A",
                 "current_upb": float(row.ending_balance or 0),
@@ -192,7 +196,9 @@ class ReportService:
     async def _get_delinquent_loans(self, deal_id, filing_id) -> list[dict]:
         stmt = (
             select(
+                Loan.prospectus_loan_id,
                 Loan.property_name,
+                Loan.property_type,
                 Loan.property_city,
                 Loan.property_state,
                 LoanSnapshot.ending_balance,
@@ -211,7 +217,9 @@ class ReportService:
         rows = (await self._db.execute(stmt)).all()
         return [
             {
+                "prospectus_loan_id": row.prospectus_loan_id or "N/A",
                 "property_name": row.property_name or "N/A",
+                "property_type": row.property_type or "N/A",
                 "city": row.property_city or "N/A",
                 "state": row.property_state or "N/A",
                 "current_upb": float(row.ending_balance or 0),
@@ -224,7 +232,9 @@ class ReportService:
     async def _get_specially_serviced_loans(self, deal_id, filing_id) -> list[dict]:
         stmt = (
             select(
+                Loan.prospectus_loan_id,
                 Loan.property_name,
+                Loan.property_type,
                 Loan.property_city,
                 Loan.property_state,
                 LoanSnapshot.ending_balance,
@@ -240,7 +250,9 @@ class ReportService:
         rows = (await self._db.execute(stmt)).all()
         return [
             {
+                "prospectus_loan_id": row.prospectus_loan_id or "N/A",
                 "property_name": row.property_name or "N/A",
+                "property_type": row.property_type or "N/A",
                 "city": row.property_city or "N/A",
                 "state": row.property_state or "N/A",
                 "current_upb": float(row.ending_balance or 0),

@@ -1,0 +1,67 @@
+# Researched Property Classifications
+# For CMBS Portfolio Intelligence Tool Demo
+# March 2026
+#
+# Format: PROPERTY_NAME|TYPE_CODE|TYPE_NAME|CONFIDENCE|SOURCE|NOTES
+#
+# These were manually researched via LoopNet, PropertyShark, CRED iQ, and web search.
+# Use as a lookup table to supplement automated classification.
+
+# === NEW YORK CITY ===
+1049 5TH AVENUE|MF|Multifamily|0.95|PropertyShark/Compass|Luxury condo, 66 units, Upper East Side
+130 BOWERY|OT|Other|0.90|Wikipedia/PropertyShark|Historic Bowery Savings Bank, now event venue (Capitale)
+120 SPRING STREET|RT|Retail|0.90|LoopNet/StreetEasy|SoHo commercial retail, 2-story
+10 JAVA STREET|IN|Industrial|0.85|CRED iQ|Industrial building, Greenpoint Brooklyn
+106 BEDFORD AVENUE|MF|Multifamily|0.85|StreetEasy|Williamsburg residential
+1384 FIRST AVENUE|RT|Retail|0.80|PropertyShark|UES street retail
+102 EAST 4TH STREET|MF|Multifamily|0.80|StreetEasy|East Village residential
+1130-1152 7TH AVENUE|RT|Retail|0.80|PropertyShark|Chelsea retail/commercial
+
+# === DALLAS / TEXAS ===
+1500 DRAGON|IN|Industrial|0.90|LoopNet/CommercialCafe|Flex-industrial, Dallas Design District, 106K SF
+1201 OAK LAWN|RT|Retail|0.85|DW&Co|Mixed retail/showroom Design District
+
+# === CHARLOTTE / NORTH CAROLINA (DBGS 2018-C1) ===
+# These are along major retail corridors - high likelihood of retail
+10023 NORTH TRYON STREET|RT|Retail|0.80|Inference|North Tryon retail corridor
+10806 PROVIDENCE ROAD|RT|Retail|0.80|Inference|Providence Road retail corridor
+11208 EAST INDEPENDENCE BOULEVARD|RT|Retail|0.80|Inference|Independence Blvd retail corridor
+12710 SOUTH TRYON STREET|RT|Retail|0.80|Inference|South Tryon retail corridor
+1120 WEST SUGAR CREEK ROAD|RT|Retail|0.75|Inference|Sugar Creek area retail
+10700 REAMES ROAD|IN|Industrial|0.75|Inference|Industrial area near airport
+105 SOUTH POLK STREET|OF|Office|0.70|Inference|Downtown Pineville office
+1076 PITTSBURGH DRIVE|IN|Industrial|0.75|Inference|Industrial park area
+
+# === DENVER / COLORADO (UBSCM 2017-C1 Grant Street Cluster) ===
+# These appear to be part of same development or portfolio
+1149 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1150 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1156 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1163 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1176 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1179 GRANT STREET|MF|Multifamily|0.75|Inference|Denver Capitol Hill residential
+1205 MAPLE STREET|MF|Multifamily|0.75|Inference|Denver residential
+1027 WASHINGTON STREET|MF|Multifamily|0.70|Inference|Denver residential
+
+# === CHICAGO / ILLINOIS ===
+1101-1109 WEST RANDOLPH STREET|MU|Mixed Use|0.85|Inference|West Loop mixed use
+1421 WEST SHURE DRIVE|IN|Industrial|0.80|Inference|Arlington Heights industrial
+1422 E. 68TH STREET|IN|Industrial|0.75|Inference|South Chicago industrial
+
+# === NEW JERSEY ===
+1025 NORTH WASHINGTON STREET|MF|Multifamily|0.70|Inference|Likely residential
+
+# === CALIFORNIA ===
+1500 WILLOW PASS COURT|OF|Office|0.75|Inference|Concord office park area
+
+# === SPECIAL USE / OTHER ===
+121 EAST MARYLAND STREET PARKING GARAGE|OT|Other|0.95|Name|Parking structure
+
+# === GENERIC NAMES (lower confidence - need location context) ===
+WHISPERING WINDS|MF|Multifamily|0.65|Inference|Common MF name - verify with deal docs
+WHISPERING WOODS|MF|Multifamily|0.65|Inference|Common MF name - verify with deal docs
+WOODGLEN VILLAGE|RT|Retail|0.65|Inference|"Village" often retail - verify
+WESTPARK HUDSON|OF|Office|0.65|Inference|"Park" often office - verify
+WINDMILL LAKES CENTER|RT|Retail|0.70|Inference|"Center" often retail
+WILMONT|MF|Multifamily|0.60|Inference|Generic name - verify
+WEST 34TH|RT|Retail|0.70|Inference|Manhattan retail - verify address

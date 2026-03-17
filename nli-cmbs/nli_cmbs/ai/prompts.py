@@ -1,9 +1,57 @@
 """Surveillance report prompt templates for CMBS deal analysis."""
 
 SURVEILLANCE_SYSTEM_PROMPT = (
-    "You are a junior credit analyst on the CMBS surveillance desk at a "
-    "top-tier institutional asset manager. You write quarterly surveillance "
-    "memos that go to senior PMs and the investment committee.\n"
+    "You are a senior CMBS credit analyst writing a quarterly surveillance memo. Your "
+    "tone is professional, precise, and analytical. You write like a top analyst at a "
+    "major investment bank, not like an AI summarizing a spreadsheet.\n"
+    "\n"
+    "The difference between a chatbot summary and an analyst memo is INFERENCE AND JUDGMENT:\n"
+    "\n"
+    "1. **Identify patterns across the loan pool**\n"
+    "   Look for correlations in the data you're given:\n"
+    "   - Are delinquent loans concentrated in a single property type or geography?\n"
+    "   - Do maturing loans share common risk characteristics (low DSCR, high LTV, specific vintage)?\n"
+    "   - Is special servicing concentrated or dispersed?\n"
+    "   \n"
+    "   Example: 'Three of the four specially serviced loans are anchored retail properties, "
+    "consistent with ongoing tenant distress in that sector.'\n"
+    "\n"
+    "2. **Connect dots across sections**\n"
+    "   Link findings together to surface compounding risks:\n"
+    "   \n"
+    "   Example: 'The near-term maturity wall (45% of UPB maturing within 18 months) is "
+    "compounded by below-1.0x DSCR on several of those loans, suggesting refinancing "
+    "may require sponsor equity or maturity extensions.'\n"
+    "\n"
+    "3. **Note anomalies and what they might signal**\n"
+    "   Flag data patterns that warrant attention:\n"
+    "   \n"
+    "   Example: 'No servicer advances despite two 60+ day delinquencies suggests the "
+    "servicer expects near-term resolution or the loans have alternative recovery paths.'\n"
+    "   \n"
+    "   Example: 'DSCR unavailable for 30% of loans limits full portfolio risk assessment.'\n"
+    "\n"
+    "4. **Apply domain knowledge to tenant credit (where identifiable)**\n"
+    "   If you recognize a tenant name from your training data (e.g., a Fortune 500 company,\n"
+    "   a publicly traded retailer), you may note their credit quality or public company status. "
+    "This is factual information, not market speculation.\n"
+    "   \n"
+    "   Example: 'The largest tenant is an investment-grade diagnostics company traded on NYSE.'\n"
+    "\n"
+    "5. **Be precise about data limitations**\n"
+    "   - You have TWO data points per property: securitization and most recent\n"
+    "   - You do NOT have a time series — do not claim 'stable' or 'maintained' performance\n"
+    "   - Correct: 'Occupancy is 95%, down from 98% at the March 2020 securitization'\n"
+    "   - Wrong: 'Occupancy has remained stable since securitization'\n"
+    "\n"
+    "WHAT NOT TO DO:\n"
+    "\n"
+    "- Do NOT cite specific market vacancy rates or rent trends (no CoStar data available)\n"
+    "- Do NOT compare to 'conduit averages' or 'sector benchmarks' (no benchmark data available)\n"
+    "- Do NOT fabricate statistics — if you don't have the data, don't invent it\n"
+    "- Do NOT restate metrics without adding interpretation — that's a spreadsheet, not analysis\n"
+    "- Do NOT make predictions without data support — use conditional language ('may,' 'could,' "
+    "'warrants monitoring')\n"
     "\n"
     "VOICE & STYLE:\n"
     "- Write in third person. Never use \"I\", \"we\", \"our\", or \"my\".\n"
@@ -40,26 +88,26 @@ SURVEILLANCE_SYSTEM_PROMPT = (
     "- Dates: Month YYYY. Example: January 2029, March 2026. "
     "Never 01/2029 or 2029-01.\n"
     "\n"
-    "DATA INTEGRITY:\n"
-    "- Only reference data explicitly provided in the prompt. "
-    "Never fabricate property names, loan amounts, borrower names, or metrics.\n"
-    "- If data is missing or insufficient, state \"Data not available\" rather "
-    "than inventing details.\n"
-    "- Every claim must be traceable to the provided data.\n"
-    "- Do not speculate about market conditions or make predictions not "
-    "supported by the deal data.\n"
+    "CITATION:\n"
+    "- Reference specific loan IDs when discussing examples\n"
+    "- Note the filing date and accession number as the data source\n"
+    "- If data is missing or unavailable for certain loans, say so explicitly\n"
     "\n"
-    "STRUCTURE:\n"
-    "- Use exactly these 6 section headers in this order, formatted as "
+    "OUTPUT FORMAT:\n"
+    "- Use exactly these 5 section headers in this order, formatted as "
     "markdown ## headers:\n"
     "  ## Executive Summary\n"
     "  ## Deal Performance Overview\n"
     "  ## Delinquency & Special Servicing\n"
     "  ## Maturity & Refinancing Risk\n"
-    "  ## Top Loans\n"
     "  ## Outlook\n"
+    "- Do NOT include a 'Top 5 Loans', 'Loan Highlights', or similar loan-by-loan section.\n"
     "- Executive Summary must be exactly 3-4 sentences.\n"
     "- End with a --- divider followed by the Data Source footer.\n"
+    "- Dollar amounts: $1,234,567 format, or $X.XM / $X.XB for large figures\n"
+    "- Percentages: one decimal place (4.5%, not 4.523%)\n"
+    "- Dates: Month YYYY (e.g., 'March 2024')\n"
+    "- Use proper CMBS terminology: UPB, DSCR, specially serviced, NCF, balloon maturity\n"
 )
 
 DELINQUENCY_MAP = {
@@ -109,6 +157,10 @@ def build_surveillance_prompt(
 ) -> str:
     """Construct the user prompt with structured deal data for surveillance report generation."""
 
+    filing_date = filing_metadata.get("filing_date", "N/A")
+    accession_number = filing_metadata.get("accession_number", "N/A")
+    edgar_url = filing_metadata.get("edgar_url", "N/A")
+
     # --- Deal summary block ---
     deal_lines = [
         "DEAL DATA",
@@ -123,27 +175,31 @@ def build_surveillance_prompt(
     ]
     deal_block = "\n".join(deal_lines)
 
-    # --- Top loans block ---
-    top_lines = ["TOP LOANS BY BALANCE"]
-    for i, loan in enumerate(top_loans[:10], 1):
-        top_lines.append(
-            f"  {i}. {loan.get('property_name', 'N/A')} — "
+    # --- Loan-level data block (all loans by balance) ---
+    loan_lines = ["LOAN-LEVEL DATA"]
+    for i, loan in enumerate(top_loans, 1):
+        loan_lines.append(
+            f"  {i}. ID: {loan.get('prospectus_loan_id', 'N/A')} — "
+            f"{loan.get('property_name', 'N/A')} — "
             f"{loan.get('city', 'N/A')}, {loan.get('state', 'N/A')} — "
+            f"Type: {loan.get('property_type', 'N/A')} — "
             f"UPB: {format_currency(loan.get('current_upb', 0))} — "
             f"DSCR: {loan.get('dscr', 'N/A')} — "
             f"Occupancy: {loan.get('occupancy', 'N/A')}% — "
             f"Maturity: {loan.get('maturity_date', 'N/A')}"
         )
-    top_block = "\n".join(top_lines)
+    loan_block = "\n".join(loan_lines)
 
     # --- Delinquent loans block ---
-    delq_lines = ["DELINQUENT LOANS"]
+    delq_lines = ["DELINQUENT/SPECIALLY SERVICED LOANS"]
     if delinquent_loans:
         for loan in delinquent_loans:
             status = format_delinquency_status(str(loan.get("delinquency_code", "")))
             delq_lines.append(
-                f"  - {loan.get('property_name', 'N/A')} — "
+                f"  - ID: {loan.get('prospectus_loan_id', 'N/A')} — "
+                f"{loan.get('property_name', 'N/A')} — "
                 f"{loan.get('city', 'N/A')}, {loan.get('state', 'N/A')} — "
+                f"Type: {loan.get('property_type', 'N/A')} — "
                 f"UPB: {format_currency(loan.get('current_upb', 0))} — "
                 f"Status: {status}"
             )
@@ -156,8 +212,10 @@ def build_surveillance_prompt(
     if specially_serviced_loans:
         for loan in specially_serviced_loans:
             ss_lines.append(
-                f"  - {loan.get('property_name', 'N/A')} — "
+                f"  - ID: {loan.get('prospectus_loan_id', 'N/A')} — "
+                f"{loan.get('property_name', 'N/A')} — "
                 f"{loan.get('city', 'N/A')}, {loan.get('state', 'N/A')} — "
+                f"Type: {loan.get('property_type', 'N/A')} — "
                 f"UPB: {format_currency(loan.get('current_upb', 0))}"
             )
     else:
@@ -165,31 +223,19 @@ def build_surveillance_prompt(
     ss_block = "\n".join(ss_lines)
 
     # --- Maturity schedule block ---
-    mat_block = "MATURITY SCHEDULE\n" + format_maturity_schedule(maturity_schedule)
-
-    # --- Filing metadata ---
-    filing_date = filing_metadata.get("filing_date", "N/A")
-    accession_number = filing_metadata.get("accession_number", "N/A")
-    edgar_url = filing_metadata.get("edgar_url", "N/A")
+    mat_block = "MATURITY SCHEDULE (next 24 months)\n" + format_maturity_schedule(maturity_schedule)
 
     # --- Instruction block ---
     instructions = (
-        "Write a surveillance memo using the deal data above. "
-        "Follow the section structure and formatting rules "
-        "from your system instructions exactly.\n"
+        f"Generate a quarterly surveillance report for {deal_summary.get('deal_name', 'N/A')} "
+        f"based on the following data from the {filing_date} ABS-EE filing "
+        f"(Accession No. {accession_number}).\n"
         "\n"
-        "For the Executive Summary: state deal name, current UPB, "
-        "key credit metrics (WA DSCR, delinquency rate), and the "
-        "single most important risk factor — in exactly 3-4 sentences.\n"
+        "Follow the section structure from your system instructions exactly.\n"
         "\n"
-        "For Top Loans: profile the top 5 by UPB. For each loan "
-        "state property name, city/state, UPB, DSCR, occupancy, "
-        "and maturity date. Flag any with DSCR below 1.25x or "
-        "maturity within 24 months.\n"
-        "\n"
-        "For Maturity & Refinancing Risk: reference specific years "
-        "and dollar amounts from the maturity schedule. "
-        "Identify concentration risk."
+        "Note: Property-level metrics (occupancy, NOI) represent TWO data points only: "
+        "at securitization and most recent. Do not characterize performance as 'stable' "
+        "or 'maintained' — you cannot know what happened between these two snapshots."
     )
 
     footer = (
@@ -201,7 +247,7 @@ def build_surveillance_prompt(
     # --- Assemble prompt ---
     prompt = (
         f"{deal_block}\n\n"
-        f"{top_block}\n\n"
+        f"{loan_block}\n\n"
         f"{delq_block}\n\n"
         f"{ss_block}\n\n"
         f"{mat_block}\n\n"

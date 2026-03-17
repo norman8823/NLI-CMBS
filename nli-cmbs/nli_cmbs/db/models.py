@@ -74,6 +74,9 @@ class Loan(Base):
     interest_only_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     balloon_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     lien_position: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # AI-generated blurb for property modal
+    ai_blurb: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_blurb_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
     # Pari passu / A-B note linking: "1A", "1B" → parent "1"
@@ -118,6 +121,7 @@ class Property(Base):
     property_zip: Mapped[str | None] = mapped_column(String(20), nullable=True)
     property_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     property_type_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    property_type_source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 'reported' | 'inferred'
     
     # Physical characteristics
     net_rentable_sq_ft: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
