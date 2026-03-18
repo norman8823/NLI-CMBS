@@ -145,6 +145,21 @@ class IngestService:
                     interest_only_indicator=loan_data.interest_only_indicator,
                     balloon_indicator=loan_data.balloon_indicator,
                     lien_position=loan_data.lien_position,
+                    is_modified=loan_data.is_modified,
+                    modification_date=loan_data.modification_date,
+                    modification_code=loan_data.modification_code,
+                    modified_interest_rate=(
+                        float(loan_data.modified_interest_rate)
+                        if loan_data.modified_interest_rate
+                        else None
+                    ),
+                    modified_maturity_date=loan_data.modified_maturity_date,
+                    modified_payment_amount=self._to_float(loan_data.modified_payment_amount),
+                    principal_forgiveness_amount=self._to_float(
+                        loan_data.principal_forgiveness_amount
+                    ),
+                    principal_deferral_amount=self._to_float(loan_data.principal_deferral_amount),
+                    deferred_interest_amount=self._to_float(loan_data.deferred_interest_amount),
                 )
                 self._session.add(db_loan)
                 loan_map[lid] = db_loan
@@ -255,8 +270,22 @@ class IngestService:
                 revenue_most_recent=self._to_float(prop_data.revenue_most_recent),
                 operating_expenses_most_recent=self._to_float(prop_data.operating_expenses_most_recent),
                 largest_tenant=prop_data.largest_tenant,
+                largest_tenant_sf=prop_data.largest_tenant_sf,
+                largest_tenant_lease_expiration=prop_data.largest_tenant_lease_expiration,
+                largest_tenant_pct_nra=self._to_float(prop_data.largest_tenant_pct_nra),
                 second_largest_tenant=prop_data.second_largest_tenant,
+                second_largest_tenant_sf=prop_data.second_largest_tenant_sf,
+                second_largest_tenant_lease_expiration=prop_data.second_largest_tenant_lease_expiration,
+                second_largest_tenant_pct_nra=self._to_float(prop_data.second_largest_tenant_pct_nra),
                 third_largest_tenant=prop_data.third_largest_tenant,
+                third_largest_tenant_sf=prop_data.third_largest_tenant_sf,
+                third_largest_tenant_lease_expiration=prop_data.third_largest_tenant_lease_expiration,
+                third_largest_tenant_pct_nra=self._to_float(prop_data.third_largest_tenant_pct_nra),
+                year_renovated=prop_data.year_renovated,
+                number_of_units=prop_data.number_of_units,
+                appraised_value=self._to_float(prop_data.appraised_value),
+                appraisal_date=prop_data.appraisal_date,
+                noi_date=prop_data.noi_date,
             )
             self._session.add(prop)
             result.properties_created += 1
@@ -310,3 +339,22 @@ class IngestService:
         # Update property count if provided
         if hasattr(loan_data, 'property_count') and loan_data.property_count > 1:
             db_loan.property_count = loan_data.property_count
+        # Modification fields — always update (these can change between filings)
+        if loan_data.is_modified:
+            db_loan.is_modified = True
+            if loan_data.modification_date:
+                db_loan.modification_date = loan_data.modification_date
+            if loan_data.modification_code:
+                db_loan.modification_code = loan_data.modification_code
+            if loan_data.modified_interest_rate is not None:
+                db_loan.modified_interest_rate = float(loan_data.modified_interest_rate)
+            if loan_data.modified_maturity_date:
+                db_loan.modified_maturity_date = loan_data.modified_maturity_date
+            if loan_data.modified_payment_amount is not None:
+                db_loan.modified_payment_amount = float(loan_data.modified_payment_amount)
+            if loan_data.principal_forgiveness_amount is not None:
+                db_loan.principal_forgiveness_amount = float(loan_data.principal_forgiveness_amount)
+            if loan_data.principal_deferral_amount is not None:
+                db_loan.principal_deferral_amount = float(loan_data.principal_deferral_amount)
+            if loan_data.deferred_interest_amount is not None:
+                db_loan.deferred_interest_amount = float(loan_data.deferred_interest_amount)

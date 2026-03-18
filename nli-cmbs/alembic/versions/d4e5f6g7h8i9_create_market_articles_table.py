@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column('url', sa.String(2000), unique=True, nullable=False),
         sa.Column('title', sa.String(1000), nullable=False),
         sa.Column('author', sa.String(300), nullable=True),
-        sa.Column('published_date', sa.DateTime, nullable=False),
+        sa.Column('published_date', sa.DateTime(timezone=True), nullable=False),
         sa.Column('excerpt', sa.Text, nullable=True),
         sa.Column('body_text', sa.Text, nullable=True),
         sa.Column('source', sa.String(50), nullable=False, server_default='Trepp'),

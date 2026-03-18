@@ -32,6 +32,17 @@ class ParsedLoan(BaseModel):
     # Multi-property indicator (updated after parsing properties)
     property_count: int = 1
 
+    # Modification fields
+    is_modified: bool = False
+    modification_date: date | None = None
+    modification_code: str | None = None
+    modified_interest_rate: Decimal | None = None
+    modified_maturity_date: date | None = None
+    modified_payment_amount: Decimal | None = None
+    principal_forgiveness_amount: Decimal | None = None
+    principal_deferral_amount: Decimal | None = None
+    deferred_interest_amount: Decimal | None = None
+
 
 class ParsedProperty(BaseModel):
     """Individual property within a multi-property loan.
@@ -82,8 +93,26 @@ class ParsedProperty(BaseModel):
     
     # Tenants
     largest_tenant: str | None = None
+    largest_tenant_sf: int | None = None
+    largest_tenant_lease_expiration: date | None = None
+    largest_tenant_pct_nra: Decimal | None = None
+
     second_largest_tenant: str | None = None
+    second_largest_tenant_sf: int | None = None
+    second_largest_tenant_lease_expiration: date | None = None
+    second_largest_tenant_pct_nra: Decimal | None = None
+
     third_largest_tenant: str | None = None
+    third_largest_tenant_sf: int | None = None
+    third_largest_tenant_lease_expiration: date | None = None
+    third_largest_tenant_pct_nra: Decimal | None = None
+
+    # Additional property details
+    year_renovated: int | None = None
+    number_of_units: int | None = None
+    appraised_value: Decimal | None = None
+    appraisal_date: date | None = None
+    noi_date: date | None = None
 
 
 class ParsedLoanSnapshot(BaseModel):

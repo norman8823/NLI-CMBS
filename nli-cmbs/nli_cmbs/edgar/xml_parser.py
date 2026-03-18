@@ -253,6 +253,7 @@ class Ex102Parser:
         )
 
         self._extract_credit_metrics(el, snapshot)
+        self._extract_modification_fields(el, loan)
         return loan, snapshot
 
     def _parse_property_element(
@@ -326,8 +327,55 @@ class Ex102Parser:
                 self._get_text(el, "property/operatingExpensesAmount")
             ),
             largest_tenant=self._get_text(el, "property/largestTenant"),
+            largest_tenant_sf=self._parse_int(
+                self._get_text(el, "property/squareFeetOfLargestTenant")
+            ),
+            largest_tenant_lease_expiration=self._parse_date(
+                self._get_text(el, "property/leaseExpirationDateLargestTenant")
+            ),
+            largest_tenant_pct_nra=self._parse_decimal(
+                self._get_text(el, "property/percentOfPropertySquareFeetLargestTenant")
+            ),
             second_largest_tenant=self._get_text(el, "property/secondLargestTenant"),
+            second_largest_tenant_sf=self._parse_int(
+                self._get_text(el, "property/squareFeetOfSecondLargestTenant")
+            ),
+            second_largest_tenant_lease_expiration=self._parse_date(
+                self._get_text(el, "property/leaseExpirationDateSecondLargestTenant")
+            ),
+            second_largest_tenant_pct_nra=self._parse_decimal(
+                self._get_text(el, "property/percentOfPropertySquareFeetSecondLargestTenant")
+            ),
             third_largest_tenant=self._get_text(el, "property/thirdLargestTenant"),
+            third_largest_tenant_sf=self._parse_int(
+                self._get_text(el, "property/squareFeetOfThirdLargestTenant")
+            ),
+            third_largest_tenant_lease_expiration=self._parse_date(
+                self._get_text(el, "property/leaseExpirationDateThirdLargestTenant")
+            ),
+            third_largest_tenant_pct_nra=self._parse_decimal(
+                self._get_text(el, "property/percentOfPropertySquareFeetThirdLargestTenant")
+            ),
+            year_renovated=self._parse_int(
+                self._get_text(el, "property/propertyYearLastRenovated")
+                or self._get_text(el, "property/yearLastRenovatedNumber")
+            ),
+            number_of_units=self._parse_int(
+                self._get_text(el, "property/numberOfUnits")
+                or self._get_text(el, "property/numberOfUnitsNumber")
+            ),
+            appraised_value=self._parse_decimal(
+                self._get_text(el, "property/mostRecentValuationAmount")
+                or self._get_text(el, "property/valuationAmount")
+            ),
+            appraisal_date=self._parse_date(
+                self._get_text(el, "property/mostRecentValuationDate")
+                or self._get_text(el, "property/valuationDate")
+            ),
+            noi_date=self._parse_date(
+                self._get_text(el, "property/mostRecentNetOperatingIncomeDate")
+                or self._get_text(el, "property/netOperatingIncomeDateMostRecent")
+            ),
         )
 
     def _extract_credit_metrics(self, el: etree._Element, snapshot: ParsedLoanSnapshot) -> None:
@@ -378,6 +426,71 @@ class Ex102Parser:
             self._get_text(el, "property/valuationSecuritizationAmount")
         )
         snapshot.appraised_value = snapshot.appraised_value_at_securitization
+
+    def _extract_modification_fields(self, el: etree._Element, loan: ParsedLoan) -> None:
+        """Extract loan modification fields from ABS-EE XML."""
+        # ModificationIndicator / LoanModificationIndicator
+        mod_indicator = (
+            self._get_text(el, "modificationIndicator")
+            or self._get_text(el, "loanModificationIndicator")
+        )
+
+        # ModificationDate / DateOfLastModification
+        mod_date_str = (
+            self._get_text(el, "modificationDate")
+            or self._get_text(el, "dateOfLastModification")
+        )
+        loan.modification_date = self._parse_date(mod_date_str)
+
+        # ModificationCode / ModificationType
+        loan.modification_code = (
+            self._get_text(el, "modificationCode")
+            or self._get_text(el, "modificationType")
+        )
+
+        # ModifiedInterestRate / ModifiedNoteRate
+        loan.modified_interest_rate = self._parse_decimal(
+            self._get_text(el, "modifiedInterestRate")
+            or self._get_text(el, "modifiedNoteRate")
+        )
+
+        # ModifiedMaturityDate / ModifiedLoanMaturityDate
+        loan.modified_maturity_date = self._parse_date(
+            self._get_text(el, "modifiedMaturityDate")
+            or self._get_text(el, "modifiedLoanMaturityDate")
+        )
+
+        # ModifiedPaymentAmount
+        loan.modified_payment_amount = self._parse_decimal(
+            self._get_text(el, "modifiedPaymentAmount")
+        )
+
+        # PrincipalForgiveness / PrincipalForgivenessAmount
+        loan.principal_forgiveness_amount = self._parse_decimal(
+            self._get_text(el, "principalForgiveness")
+            or self._get_text(el, "principalForgivenessAmount")
+        )
+
+        # PrincipalDeferral / DeferredPrincipalBalance
+        loan.principal_deferral_amount = self._parse_decimal(
+            self._get_text(el, "principalDeferral")
+            or self._get_text(el, "deferredPrincipalBalance")
+        )
+
+        # DeferredInterestAmount / TotalDeferredInterest
+        loan.deferred_interest_amount = self._parse_decimal(
+            self._get_text(el, "deferredInterestAmount")
+            or self._get_text(el, "totalDeferredInterest")
+        )
+
+        # Derive is_modified: true if indicator says so OR any modification data present
+        loan.is_modified = (
+            self._parse_bool(mod_indicator) is True
+            or loan.modification_date is not None
+            or loan.modification_code is not None
+            or (loan.principal_forgiveness_amount is not None and loan.principal_forgiveness_amount > 0)
+            or (loan.principal_deferral_amount is not None and loan.principal_deferral_amount > 0)
+        )
 
     def _get_text(self, parent: etree._Element, tag: str) -> str | None:
         """Get child element text, handling the default namespace and nested paths."""

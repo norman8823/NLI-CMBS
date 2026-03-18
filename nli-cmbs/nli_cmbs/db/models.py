@@ -77,6 +77,17 @@ class Loan(Base):
     interest_only_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     balloon_indicator: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     lien_position: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Modification tracking
+    is_modified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    modification_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    modification_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    modified_interest_rate: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
+    modified_maturity_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    modified_payment_amount: Mapped[float | None] = mapped_column(Numeric(16, 2), nullable=True)
+    principal_forgiveness_amount: Mapped[float | None] = mapped_column(Numeric(16, 2), nullable=True)
+    principal_deferral_amount: Mapped[float | None] = mapped_column(Numeric(16, 2), nullable=True)
+    deferred_interest_amount: Mapped[float | None] = mapped_column(Numeric(16, 2), nullable=True)
+
     # AI-generated blurb for property modal
     ai_blurb: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_blurb_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -129,10 +140,14 @@ class Property(Base):
     # Physical characteristics
     net_rentable_sq_ft: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     year_built: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    year_renovated: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    number_of_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
     
     # Valuation
     valuation_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     valuation_securitization_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    appraised_value: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    appraisal_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     
     # Occupancy
     occupancy_securitization: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
@@ -141,6 +156,7 @@ class Property(Base):
     # NOI / NCF
     noi_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     noi_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    noi_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     ncf_securitization: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     ncf_most_recent: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     
@@ -156,8 +172,19 @@ class Property(Base):
     
     # Tenants
     largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    largest_tenant_sf: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    largest_tenant_lease_expiration: Mapped[date | None] = mapped_column(Date, nullable=True)
+    largest_tenant_pct_nra: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     second_largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    second_largest_tenant_sf: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    second_largest_tenant_lease_expiration: Mapped[date | None] = mapped_column(Date, nullable=True)
+    second_largest_tenant_pct_nra: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     third_largest_tenant: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    third_largest_tenant_sf: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    third_largest_tenant_lease_expiration: Mapped[date | None] = mapped_column(Date, nullable=True)
+    third_largest_tenant_pct_nra: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
@@ -331,7 +358,7 @@ class MarketArticle(Base):
     url: Mapped[str] = mapped_column(String(2000), unique=True, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(1000), nullable=False)
     author: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    published_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    published_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="Trepp")
@@ -340,7 +367,7 @@ class MarketArticle(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_themes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
-    ingested_at: Mapped[datetime] = mapped_column(default=func.now())
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
     __table_args__ = (
         Index("ix_market_articles_source", "source"),

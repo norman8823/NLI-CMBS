@@ -121,12 +121,12 @@ async def generate_article_summary(
     truncated = body_text[:4000] if body_text else ""
 
     system_prompt = (
-        "You are a CMBS market analyst. You summarize news articles concisely, "
-        "focusing on implications for CMBS investors, servicers, and market participants."
+        "You are a CMBS market analyst. You summarize news articles concisely and factually. "
+        "Do NOT provide investment recommendations or buy/hold/sell guidance."
     )
 
-    user_prompt = f"""Summarize this article in 2-3 sentences, focusing on implications for CMBS investors.
-Then extract 3-5 key themes as short phrases.
+    user_prompt = f"""Summarize this article in 2-3 sentences, focusing on key facts and market developments.
+Then extract 3-5 key themes as short phrases. Do not include investment recommendations.
 
 Title: {title}
 Article: {truncated}
@@ -267,13 +267,15 @@ async def generate_news_digest(
 
     system_prompt = (
         "You are a senior CMBS market analyst writing a weekly market intelligence digest. "
-        "Write concisely and focus on actionable insights for portfolio managers."
+        "Summarize key themes and trends factually. Do NOT provide investment recommendations, "
+        "positioning advice, or buy/hold/sell guidance. Focus on what happened and why it matters."
     )
 
     user_prompt = f"""Based on the following {len(articles)} CMBS news articles from the past {days} days,
 write a consolidated market intelligence digest (3-5 paragraphs).
 
-Identify the top themes, highlight notable trends, and flag any risks or opportunities.
+Identify the top themes, highlight notable trends, and flag emerging risks or developments.
+Do not include investment recommendations or portfolio positioning suggestions.
 
 Articles:
 {articles_text}"""
