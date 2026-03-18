@@ -926,7 +926,7 @@ async def _backfill(years: int, limit: int, deal_ticker: str) -> None:
                     limit=limit if limit > 0 else None
                 )
 
-                console.print(f"\n[green]Backfill complete[/green]")
+                console.print("\n[green]Backfill complete[/green]")
                 console.print(f"  Deals processed: {backfill_result.deals_processed}")
                 console.print(f"  Total filings: {backfill_result.total_filings}")
                 console.print(f"  Loan snapshots: {backfill_result.total_loan_snapshots}")
@@ -934,6 +934,149 @@ async def _backfill(years: int, limit: int, deal_ticker: str) -> None:
                 console.print(f"  Errors: {len(backfill_result.errors)}")
         finally:
             await edgar.close()
+
+
+@app.command(name="ingest-news")
+def ingest_news(
+    days: int = typer.Option(7, help="Ingest articles from last N days"),
+    skip_full_text: bool = typer.Option(False, help="Skip fetching full article bodies"),
+    skip_summaries: bool = typer.Option(False, help="Skip AI summary generation"),
+    dry_run: bool = typer.Option(False, help="Show what would be ingested without saving"),
+):
+    """Ingest recent CMBS news articles from Trepp RSS feed."""
+    asyncio.run(_ingest_news(days, skip_full_text, skip_summaries, dry_run))
+
+
+async def _ingest_news(
+    days: int, skip_full_text: bool, skip_summaries: bool, dry_run: bool,
+) -> None:
+    from nli_cmbs.services.news_ingestion import fetch_rss_feed
+
+    console.print("[bold]Fetching Trepp CMBS RSS feed...[/bold]")
+    articles = await fetch_rss_feed()
+
+    from datetime import timedelta, timezone
+
+    cutoff = __import__("datetime").datetime.now(timezone.utc) - timedelta(days=days)
+    recent = [a for a in articles if a["published_date"] >= cutoff]
+    console.print(f"Found {len(articles)} articles in feed, {len(recent)} from last {days} days")
+
+    if not recent:
+        console.print("[yellow]No recent articles to ingest.[/yellow]")
+        return
+
+    if dry_run:
+        console.print(f"\n[bold]Dry run — would ingest up to {len(recent)} articles:[/bold]\n")
+        for a in recent:
+            date_str = a["published_date"].strftime("%Y-%m-%d")
+            console.print(f'  "{a["title"]}" ({date_str})')
+        return
+
+    from nli_cmbs.ai.client import get_anthropic_client
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.news_ingestion import ingest_new_articles
+
+    ai_client = None if skip_summaries else get_anthropic_client()
+
+    async with async_session_factory() as session:
+        new_articles = await ingest_new_articles(
+            db=session,
+            since_days=days,
+            fetch_full_text=not skip_full_text,
+            generate_summaries=not skip_summaries,
+            ai_client=ai_client,
+        )
+
+    if not new_articles:
+        console.print("[yellow]All recent articles already in database.[/yellow]")
+        return
+
+    console.print(f"\n[green]Ingested {len(new_articles)} new articles from Trepp:[/green]\n")
+    for a in new_articles:
+        date_str = a.published_date.strftime("%Y-%m-%d")
+        console.print(f'  [green]✓[/green] "{a.title}" ({date_str})')
+        if a.key_themes:
+            console.print(f"    Themes: {', '.join(a.key_themes)}")
+
+    console.print(f"\nDone. Ingested {len(new_articles)} articles from Trepp.")
+
+
+@app.command(name="list-news")
+def list_news(
+    limit: int = typer.Option(10, help="Number of articles to show"),
+    source: str = typer.Option(None, help="Filter by source (e.g. Trepp)"),
+    search: str = typer.Option(None, help="Search articles by title keyword"),
+):
+    """List recent news articles in the knowledge base."""
+    asyncio.run(_list_news(limit, source, search))
+
+
+async def _list_news(limit: int, source: str | None, search: str | None) -> None:
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import MarketArticle
+    from nli_cmbs.db.session import async_session_factory
+
+    async with async_session_factory() as session:
+        stmt = (
+            select(MarketArticle)
+            .order_by(MarketArticle.published_date.desc())
+            .limit(limit)
+        )
+        if source:
+            stmt = stmt.where(MarketArticle.source == source)
+        if search:
+            stmt = stmt.where(MarketArticle.title.ilike(f"%{search}%"))
+
+        result = await session.execute(stmt)
+        articles = list(result.scalars().all())
+
+    if not articles:
+        console.print("[yellow]No articles found.[/yellow]")
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Market News ({len(articles)} articles)")
+    table.add_column("Date", style="dim")
+    table.add_column("Source")
+    table.add_column("Title", max_width=60)
+    table.add_column("Themes", max_width=40)
+
+    for a in articles:
+        date_str = a.published_date.strftime("%Y-%m-%d")
+        themes = ", ".join(a.key_themes[:3]) if a.key_themes else "—"
+        table.add_row(date_str, a.source, a.title, themes)
+
+    console.print(table)
+
+
+@app.command(name="news-digest")
+def news_digest(
+    days: int = typer.Option(7, help="Summarize articles from last N days"),
+):
+    """Generate a consolidated digest of recent CMBS news."""
+    asyncio.run(_news_digest(days))
+
+
+async def _news_digest(days: int) -> None:
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+
+    from nli_cmbs.ai.client import get_anthropic_client
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.news_ingestion import generate_news_digest
+
+    ai_client = get_anthropic_client()
+
+    async with async_session_factory() as session:
+        console.print(f"[bold]Generating digest from last {days} days...[/bold]\n")
+        digest = await generate_news_digest(session, ai_client, days)
+
+    console.print(Panel(
+        Markdown(digest),
+        title=f"CMBS Market Digest — Last {days} Days",
+    ))
 
 
 @app.command()

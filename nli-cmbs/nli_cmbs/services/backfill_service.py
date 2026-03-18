@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -56,7 +57,9 @@ class BackfillService:
         filing_fetcher: FilingFetcher,
         parser: Ex102Parser,
         years_back: int = 3,
-        rate_limit_delay: float = 0.5,
+        rate_limit_delay: float = 2.0,
+        batch_size: int = 5,
+        batch_pause: float = 15.0,
     ):
         self.db = db
         self.edgar = edgar_client
@@ -64,6 +67,8 @@ class BackfillService:
         self.parser = parser
         self.years_back = years_back
         self.rate_limit_delay = rate_limit_delay
+        self.batch_size = batch_size
+        self.batch_pause = batch_pause
 
     async def backfill_all_deals(self, limit: int | None = None) -> BackfillResult:
         """Backfill historical data for all deals in the database."""
@@ -124,9 +129,16 @@ class BackfillService:
             stats.errors.append(f"Failed to fetch filing history: {e}")
             return stats
 
-        # Process each filing
+        # Process filings in batches with pauses between batches
+        consecutive_failures = 0
+        processed_in_batch = 0
+
         for filing in filings:
-            await asyncio.sleep(self.rate_limit_delay)
+            accession = filing.accession_number
+
+            # Jittered delay between individual requests
+            jittered = self.rate_limit_delay * (0.75 + random.random() * 0.5)
+            await asyncio.sleep(jittered)
 
             try:
                 if filing.parsed:
@@ -153,10 +165,31 @@ class BackfillService:
                 await self.db.commit()
 
                 stats.filings_processed += 1
+                consecutive_failures = 0
+                processed_in_batch += 1
+
+                # Batch pause: after N filings, take a longer break
+                if processed_in_batch >= self.batch_size:
+                    batch_jittered = self.batch_pause * (0.75 + random.random() * 0.5)
+                    logger.info(
+                        "Batch of %d complete for %s — pausing %.0fs",
+                        processed_in_batch, deal.ticker, batch_jittered,
+                    )
+                    await asyncio.sleep(batch_jittered)
+                    processed_in_batch = 0
 
             except Exception as e:
-                stats.errors.append(f"Filing {filing.accession_number}: {e}")
+                stats.errors.append(f"Filing {accession}: {e}")
                 await self.db.rollback()
+                consecutive_failures += 1
+
+                if consecutive_failures >= 2:
+                    cooldown = 60 * (0.75 + random.random() * 0.5)
+                    logger.warning(
+                        "%d consecutive failures for %s — cooling down %.0fs",
+                        consecutive_failures, deal.ticker, cooldown,
+                    )
+                    await asyncio.sleep(cooldown)
 
         return stats
 

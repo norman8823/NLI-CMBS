@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -321,3 +321,27 @@ class Report(Base):
 
     deal: Mapped["Deal"] = relationship(back_populates="reports")
     filing: Mapped["Filing"] = relationship()
+
+
+class MarketArticle(Base):
+    """CMBS market news articles ingested from RSS feeds (Trepp, CREFC, etc.)."""
+    __tablename__ = "market_articles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    url: Mapped[str] = mapped_column(String(2000), unique=True, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(1000), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    published_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="Trepp")
+
+    # AI-generated fields
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_themes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    ingested_at: Mapped[datetime] = mapped_column(default=func.now())
+
+    __table_args__ = (
+        Index("ix_market_articles_source", "source"),
+    )

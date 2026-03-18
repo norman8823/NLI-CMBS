@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import random
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
@@ -6,6 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nli_cmbs.db.models import Deal, Filing
 from nli_cmbs.edgar.client import EdgarClient
+
+# Delay between EDGAR HTTP requests within loops to avoid rate limiting
+_INTER_REQUEST_DELAY = 1.5
+
+
+def _jittered_delay(base: float = _INTER_REQUEST_DELAY) -> float:
+    """Add ±25% jitter to spread out requests."""
+    return base * (0.75 + random.random() * 0.5)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +107,7 @@ class FilingFetcher:
             if fd["accession_number"] in existing_accessions:
                 continue
 
+            await asyncio.sleep(_jittered_delay())
             exhibit_url = await self._find_exhibit_102(fd["accession_number"], cik)
             if not exhibit_url:
                 continue

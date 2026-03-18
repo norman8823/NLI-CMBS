@@ -23,6 +23,9 @@ dependencies = [
     "rich",
     "python-dotenv",
     "anthropic>=0.40.0",
+    "feedparser",
+    "beautifulsoup4",
+    "html2text",
 ]
 
 [project.optional-dependencies]

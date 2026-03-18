@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from typing import Any
 
 import httpx
@@ -25,8 +26,14 @@ class EdgarConnectionError(EdgarError):
     """Raised when a connection to EDGAR fails after retries."""
 
 
-_MAX_RETRIES = 3
-_BACKOFF_BASE = 1.0
+_MAX_RETRIES = 5
+_BACKOFF_BASE = 2.0
+_503_BACKOFF = [10.0, 30.0, 60.0, 120.0, 120.0]
+
+
+def _jittered_delay(base_delay: float) -> float:
+    """Add ±25% jitter to avoid thundering herd."""
+    return base_delay * (0.75 + random.random() * 0.5)
 
 
 class EdgarClient:
@@ -36,7 +43,7 @@ class EdgarClient:
             headers={"User-Agent": settings.EDGAR_USER_AGENT, "Accept": "application/json"},
             timeout=30.0,
         )
-        self._semaphore = asyncio.Semaphore(10)
+        self._semaphore = asyncio.Semaphore(3)
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         async with self._semaphore:
@@ -54,14 +61,24 @@ class EdgarClient:
                         raise EdgarNotFoundError(f"Not found: {url}")
 
                     if response.status_code == 429:
-                        delay = _BACKOFF_BASE * (2 ** (attempt - 1))
+                        delay = _jittered_delay(_BACKOFF_BASE * (2 ** (attempt - 1)))
                         logger.warning("Rate limited (429), retry %d/%d in %.1fs", attempt, _MAX_RETRIES, delay)
                         last_exc = EdgarRateLimitError(f"Rate limited: {url}")
                         await asyncio.sleep(delay)
                         continue
 
+                    if response.status_code == 503:
+                        delay = _jittered_delay(_503_BACKOFF[min(attempt - 1, len(_503_BACKOFF) - 1)])
+                        logger.warning(
+                            "EDGAR 503 (slow down), retry %d/%d in %.0fs",
+                            attempt, _MAX_RETRIES, delay,
+                        )
+                        last_exc = EdgarRateLimitError(f"503 slow down: {url}")
+                        await asyncio.sleep(delay)
+                        continue
+
                     if response.status_code >= 500:
-                        delay = _BACKOFF_BASE * (2 ** (attempt - 1))
+                        delay = _jittered_delay(_BACKOFF_BASE * (2 ** (attempt - 1)))
                         logger.warning(
                             "Server error (%d), retry %d/%d in %.1fs",
                             response.status_code, attempt, _MAX_RETRIES, delay,
@@ -76,7 +93,7 @@ class EdgarClient:
                 except httpx.HTTPStatusError:
                     raise
                 except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                    delay = _BACKOFF_BASE * (2 ** (attempt - 1))
+                    delay = _jittered_delay(_BACKOFF_BASE * (2 ** (attempt - 1)))
                     logger.warning("Connection error, retry %d/%d in %.1fs: %s", attempt, _MAX_RETRIES, delay, exc)
                     last_exc = EdgarConnectionError(str(exc))
                     await asyncio.sleep(delay)
