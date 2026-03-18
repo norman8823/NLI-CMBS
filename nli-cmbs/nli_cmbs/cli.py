@@ -864,6 +864,79 @@ async def _extract_trust_from_index(
 
 
 @app.command()
+def backfill(
+    years: int = typer.Option(3, help="Years of history to backfill"),
+    limit: int = typer.Option(0, help="Limit number of deals to process (0 = all)"),
+    deal: str = typer.Option("", help="Backfill single deal by ticker"),
+):
+    """Backfill historical filing data for time series analysis."""
+    asyncio.run(_backfill(years, limit, deal))
+
+
+async def _backfill(years: int, limit: int, deal_ticker: str) -> None:
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import Deal
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.edgar.client import EdgarClient
+    from nli_cmbs.edgar.filing_fetcher import FilingFetcher
+    from nli_cmbs.edgar.xml_parser import Ex102Parser
+    from nli_cmbs.services.backfill_service import BackfillService
+
+    async with async_session_factory() as db:
+        edgar = EdgarClient()
+        try:
+            fetcher = FilingFetcher(edgar_client=edgar, db_session=db)
+            parser = Ex102Parser()
+
+            service = BackfillService(
+                db=db,
+                edgar_client=edgar,
+                filing_fetcher=fetcher,
+                parser=parser,
+                years_back=years,
+            )
+
+            if deal_ticker:
+                # Single deal
+                result = await db.execute(
+                    select(Deal).where(Deal.ticker == deal_ticker)
+                )
+                deal_obj = result.scalar_one_or_none()
+                if not deal_obj:
+                    console.print(f"[red]Deal not found: {deal_ticker}[/red]")
+                    return
+
+                with console.status(f"Backfilling {deal_ticker}..."):
+                    stats = await service.backfill_deal(deal_obj)
+
+                console.print(f"\n[green]Backfill complete for {deal_ticker}[/green]")
+                console.print(f"  Filings found: {stats.filings_found}")
+                console.print(f"  Filings processed: {stats.filings_processed}")
+                console.print(f"  Filings skipped (already parsed): {stats.filings_skipped}")
+                console.print(f"  Loan snapshots created: {stats.loan_snapshots_created}")
+                console.print(f"  Property snapshots created: {stats.property_snapshots_created}")
+                if stats.errors:
+                    console.print(f"  [yellow]Errors: {len(stats.errors)}[/yellow]")
+                    for err in stats.errors[:5]:
+                        console.print(f"    - {err}")
+            else:
+                # All deals
+                backfill_result = await service.backfill_all_deals(
+                    limit=limit if limit > 0 else None
+                )
+
+                console.print(f"\n[green]Backfill complete[/green]")
+                console.print(f"  Deals processed: {backfill_result.deals_processed}")
+                console.print(f"  Total filings: {backfill_result.total_filings}")
+                console.print(f"  Loan snapshots: {backfill_result.total_loan_snapshots}")
+                console.print(f"  Property snapshots: {backfill_result.total_property_snapshots}")
+                console.print(f"  Errors: {len(backfill_result.errors)}")
+        finally:
+            await edgar.close()
+
+
+@app.command()
 def health():
     """Check API health."""
     import httpx

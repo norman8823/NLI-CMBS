@@ -47,6 +47,9 @@ class Filing(Base):
 
     deal: Mapped["Deal"] = relationship(back_populates="filings")
     snapshots: Mapped[list["LoanSnapshot"]] = relationship(back_populates="filing", cascade="all, delete-orphan")
+    property_snapshots: Mapped[list["PropertySnapshot"]] = relationship(
+        back_populates="filing", cascade="all, delete-orphan"
+    )
 
 
 class Loan(Base):
@@ -159,6 +162,7 @@ class Property(Base):
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
     loan: Mapped["Loan"] = relationship(back_populates="properties")
+    snapshots: Mapped[list["PropertySnapshot"]] = relationship(back_populates="property", order_by="PropertySnapshot.reporting_period_end")
 
     __table_args__ = (
         Index("ix_properties_loan_id", "loan_id"),
@@ -166,6 +170,39 @@ class Property(Base):
         Index("ix_properties_property_city", "property_city"),
         Index("ix_properties_property_state", "property_state"),
         Index("uq_properties_loan_property_id", "loan_id", "property_id", unique=True),
+    )
+
+
+class PropertySnapshot(Base):
+    """Time-series financial data for a property, one row per filing."""
+    __tablename__ = "property_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    filing_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("filings.id", ondelete="CASCADE"), nullable=False)
+    reporting_period_end: Mapped[date] = mapped_column(Date, nullable=False)
+
+    # Financials
+    occupancy: Mapped[float | None] = mapped_column(Numeric(7, 4), nullable=True)
+    noi: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    ncf: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    revenue: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    operating_expenses: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    dscr_noi: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    dscr_ncf: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+
+    # Valuation
+    valuation_amount: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    valuation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valuation_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+    property: Mapped["Property"] = relationship(back_populates="snapshots")
+    filing: Mapped["Filing"] = relationship(back_populates="property_snapshots")
+
+    __table_args__ = (
+        Index("uq_property_snapshots_property_filing", "property_id", "filing_id", unique=True),
     )
 
 
