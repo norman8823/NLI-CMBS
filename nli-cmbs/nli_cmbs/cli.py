@@ -1,10 +1,11 @@
 import asyncio
+import sys
 
 import typer
 from rich.console import Console
 
 app = typer.Typer(name="nli", help="NLI-CMBS CLI — CMBS portfolio intelligence tool")
-console = Console()
+console = Console(force_terminal=True, file=sys.stdout)
 
 
 @app.command()
