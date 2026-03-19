@@ -350,6 +350,67 @@ class Report(Base):
     filing: Mapped["Filing"] = relationship()
 
 
+class GroundTruthEntry(Base):
+    """Flat field-level ground truth records for evaluation scoring.
+
+    Each row = one verifiable fact from an ABS-EE filing.
+    Shape: (deal, loan, field_name, value, filing) — the answer key.
+    """
+    __tablename__ = "ground_truth_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    deal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deals.id"), nullable=False)
+    loan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("loans.id"), nullable=False)
+    filing_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("filings.id"), nullable=False)
+
+    field_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    field_value: Mapped[str] = mapped_column(Text, nullable=False)
+    field_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "numeric", "date", "text", "boolean"
+
+    tier: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+    __table_args__ = (
+        Index("ix_gt_deal_loan_field", "deal_id", "loan_id", "field_name"),
+        Index("ix_gt_filing", "filing_id"),
+        Index("ix_gt_tier", "tier"),
+    )
+
+
+class InferenceLog(Base):
+    """Raw log of every AI inference call for evaluation and debugging."""
+    __tablename__ = "inference_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    deal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("deals.id"), nullable=True)
+    loan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("loans.id"), nullable=True)
+    filing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("filings.id"), nullable=True)
+
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    user_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+
+    raw_response: Mapped[str] = mapped_column(Text, nullable=False)
+
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+    __table_args__ = (
+        Index("ix_inference_logs_model", "model_id"),
+        Index("ix_inference_logs_task", "task_type"),
+        Index("ix_inference_logs_deal", "deal_id"),
+        Index("ix_inference_logs_created", "created_at"),
+    )
+
+
 class MarketArticle(Base):
     """CMBS market news articles ingested from RSS feeds (Trepp, CREFC, etc.)."""
     __tablename__ = "market_articles"

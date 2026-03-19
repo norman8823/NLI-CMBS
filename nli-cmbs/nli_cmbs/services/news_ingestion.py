@@ -138,16 +138,16 @@ Respond in JSON format only:
 }}"""
 
     try:
-        raw = await ai_client.generate_report(
+        result = await ai_client.generate_report(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,
         )
         # Extract JSON from response (may have markdown fences)
-        json_match = re.search(r"\{[\s\S]*\}", raw)
+        json_match = re.search(r"\{[\s\S]*\}", result.text)
         if json_match:
             return json.loads(json_match.group())
-        return {"summary": raw.strip(), "key_themes": []}
+        return {"summary": result.text.strip(), "key_themes": []}
     except Exception:
         logger.warning("Failed to generate AI summary for: %s", title, exc_info=True)
         return {"summary": None, "key_themes": None}
@@ -280,8 +280,9 @@ Do not include investment recommendations or portfolio positioning suggestions.
 Articles:
 {articles_text}"""
 
-    return await ai_client.generate_report(
+    result = await ai_client.generate_report(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.3,
     )
+    return result.text

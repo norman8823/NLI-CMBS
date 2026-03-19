@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from nli_cmbs.ai.client import AnthropicClient
-from nli_cmbs.db.models import Deal, Loan, LoanSnapshot, Property
+from nli_cmbs.db.models import Deal, InferenceLog, Loan, LoanSnapshot, Property
 
 logger = logging.getLogger(__name__)
 
@@ -195,18 +195,33 @@ async def generate_loan_blurb(
     user_prompt = _build_blurb_prompt(loan, snapshot, properties, loan.deal)
 
     logger.info("Generating blurb for loan %s (%s)", loan.prospectus_loan_id, loan_id)
-    blurb_text = await ai_client.generate_report(
+    result = await ai_client.generate_report(
         system_prompt=BLURB_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         temperature=0.3,
     )
 
+    # Log inference
+    inference_log = InferenceLog(
+        task_type="loan_blurb",
+        deal_id=loan.deal_id,
+        loan_id=loan.id,
+        model_id=result.model_id,
+        system_prompt=BLURB_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        raw_response=result.text,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        latency_ms=result.latency_ms,
+    )
+    db.add(inference_log)
+
     # Cache in DB
-    loan.ai_blurb = blurb_text
+    loan.ai_blurb = result.text
     loan.ai_blurb_generated_at = now
     await db.commit()
 
     return {
-        "blurb": blurb_text,
+        "blurb": result.text,
         "generated_at": now.isoformat(),
     }

@@ -1079,6 +1079,156 @@ async def _news_digest(days: int) -> None:
     ))
 
 
+@app.command(name="hydrate-ground-truth")
+def hydrate_ground_truth(
+    deal: str = typer.Argument(..., help="Deal ticker, e.g. BMARK-2024-V6"),
+    filing_id: str = typer.Option(None, help="Specific filing ID (default: latest parsed)"),
+):
+    """Hydrate ground truth entries from LoanSnapshot data for a deal."""
+    asyncio.run(_hydrate_ground_truth(deal, filing_id))
+
+
+async def _hydrate_ground_truth(ticker: str, filing_id: str | None) -> None:
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import Deal
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.ground_truth_service import hydrate_ground_truth
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(Deal).where(Deal.ticker == ticker))
+        deal = result.scalar_one_or_none()
+        if not deal:
+            console.print(f"[red]Deal not found:[/red] {ticker}")
+            raise typer.Exit(1)
+
+        console.print(f"[bold]Hydrating ground truth for:[/bold] {ticker}")
+        created = await hydrate_ground_truth(session, deal, filing_id=filing_id)
+        console.print(f"[green]Created {created} ground truth entries.[/green]")
+
+
+@app.command(name="eval-score")
+def eval_score(
+    deal: str = typer.Argument(..., help="Deal ticker to evaluate"),
+):
+    """Score AI extractions against ground truth for a deal."""
+    asyncio.run(_eval_score(deal))
+
+
+async def _eval_score(ticker: str) -> None:
+    from sqlalchemy import select
+
+    from nli_cmbs.db.models import Deal, GroundTruthEntry, LoanSnapshot
+    from nli_cmbs.db.session import async_session_factory
+    from nli_cmbs.services.scoring import score_extraction
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(Deal).where(Deal.ticker == ticker))
+        deal = result.scalar_one_or_none()
+        if not deal:
+            console.print(f"[red]Deal not found:[/red] {ticker}")
+            raise typer.Exit(1)
+
+        # Fetch ground truth entries
+        gt_result = await session.execute(
+            select(GroundTruthEntry).where(GroundTruthEntry.deal_id == deal.id)
+        )
+        gt_entries = list(gt_result.scalars().all())
+
+        if not gt_entries:
+            console.print(f"[yellow]No ground truth entries for {ticker}. Run hydrate-ground-truth first.[/yellow]")
+            raise typer.Exit(1)
+
+        # Build extracted values from latest snapshots
+        snap_result = await session.execute(
+            select(LoanSnapshot).where(
+                LoanSnapshot.loan_id.in_([e.loan_id for e in gt_entries])
+            )
+        )
+        snapshots = list(snap_result.scalars().all())
+
+        # Group snapshots by loan_id, take latest
+        latest_snaps: dict = {}
+        for snap in snapshots:
+            existing = latest_snaps.get(snap.loan_id)
+            if not existing or snap.reporting_period_end_date > existing.reporting_period_end_date:
+                latest_snaps[snap.loan_id] = snap
+
+        # Build extracted values per loan
+        from collections import defaultdict
+
+        gt_by_loan: dict[str, list[dict]] = defaultdict(list)
+        for entry in gt_entries:
+            gt_by_loan[entry.loan_id].append({
+                "field_name": entry.field_name,
+                "field_value": entry.field_value,
+                "field_type": entry.field_type,
+                "tier": entry.tier,
+            })
+
+        total_scorecard = None
+        loan_count = 0
+
+        for loan_id, entries in gt_by_loan.items():
+            snap = latest_snaps.get(loan_id)
+            if not snap:
+                continue
+
+            extracted = {}
+            for entry in entries:
+                val = getattr(snap, entry["field_name"], None)
+                extracted[entry["field_name"]] = str(val) if val is not None else None
+
+            scorecard = score_extraction(entries, extracted)
+            loan_count += 1
+
+            if total_scorecard is None:
+                total_scorecard = scorecard
+            else:
+                total_scorecard.total_fields += scorecard.total_fields
+                total_scorecard.matched_fields += scorecard.matched_fields
+                total_scorecard.missing_fields += scorecard.missing_fields
+                total_scorecard.field_scores.extend(scorecard.field_scores)
+
+        if total_scorecard is None:
+            console.print("[yellow]No snapshots found to score against.[/yellow]")
+            raise typer.Exit(1)
+
+        total_scorecard.accuracy = (
+            total_scorecard.matched_fields / total_scorecard.total_fields
+            if total_scorecard.total_fields > 0 else 0.0
+        )
+
+        # Recompute tier accuracies
+        tier_results: dict[int, list[bool]] = {1: [], 2: [], 3: []}
+        errors: list[float] = []
+        for fs in total_scorecard.field_scores:
+            if fs.tier in tier_results:
+                tier_results[fs.tier].append(fs.match)
+            if fs.error is not None:
+                errors.append(fs.error)
+
+        t1 = tier_results.get(1, [])
+        t2 = tier_results.get(2, [])
+        total_scorecard.tier_1_accuracy = sum(t1) / len(t1) if t1 else None
+        total_scorecard.tier_2_accuracy = sum(t2) / len(t2) if t2 else None
+        total_scorecard.mean_absolute_error = sum(errors) / len(errors) if errors else None
+
+        # Display results
+        console.print(f"\n[bold]Evaluation Scorecard — {ticker}[/bold]")
+        console.print(f"  Loans evaluated:  {loan_count}")
+        console.print(f"  Total fields:     {total_scorecard.total_fields}")
+        console.print(f"  Matched:          {total_scorecard.matched_fields}")
+        console.print(f"  Missing:          {total_scorecard.missing_fields}")
+        console.print(f"  [bold]Accuracy:       {total_scorecard.accuracy:.1%}[/bold]")
+        if total_scorecard.tier_1_accuracy is not None:
+            console.print(f"  Tier 1 accuracy:  {total_scorecard.tier_1_accuracy:.1%}")
+        if total_scorecard.tier_2_accuracy is not None:
+            console.print(f"  Tier 2 accuracy:  {total_scorecard.tier_2_accuracy:.1%}")
+        if total_scorecard.mean_absolute_error is not None:
+            console.print(f"  Mean abs error:   {total_scorecard.mean_absolute_error:.4f}")
+
+
 @app.command()
 def health():
     """Check API health."""

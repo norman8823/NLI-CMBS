@@ -15,7 +15,7 @@ from nli_cmbs.ai.prompts import (
     build_surveillance_prompt,
     format_delinquency_status,
 )
-from nli_cmbs.db.models import Filing, Loan, LoanSnapshot, Report
+from nli_cmbs.db.models import Filing, InferenceLog, Loan, LoanSnapshot, Report
 from nli_cmbs.schemas.report import ReportResponse
 from nli_cmbs.services.deal_service import DealService
 from nli_cmbs.services.metrics import compute_deal_metrics
@@ -117,20 +117,35 @@ class ReportService:
 
         # 12. Call AI
         logger.info("Generating surveillance report for %s", ticker)
-        report_text = await self._ai.generate_report(
+        result = await self._ai.generate_report(
             system_prompt=SURVEILLANCE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
 
-        # 13. Cache the report
+        # 13. Log inference
+        inference_log = InferenceLog(
+            task_type="surveillance_report",
+            deal_id=deal.id,
+            filing_id=filing.id,
+            model_id=result.model_id,
+            system_prompt=SURVEILLANCE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            raw_response=result.text,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            latency_ms=result.latency_ms,
+        )
+        self._db.add(inference_log)
+
+        # 14. Cache the report
         report = Report(
             deal_id=deal.id,
             filing_id=filing.id,
             report_type="surveillance",
-            report_text=report_text,
-            model_used=self._ai._model,
-            prompt_tokens=self._ai.count_tokens(user_prompt),
-            completion_tokens=self._ai.count_tokens(report_text),
+            report_text=result.text,
+            model_used=result.model_id,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
         )
         self._db.add(report)
         await self._db.commit()
@@ -138,9 +153,9 @@ class ReportService:
 
         return ReportResponse(
             deal_ticker=ticker,
-            report_text=report_text,
+            report_text=result.text,
             generated_at=report.generated_at or datetime.utcnow(),
-            model_used=self._ai._model,
+            model_used=result.model_id,
             filing_date=str(filing.filing_date),
             accession_number=filing.accession_number,
             cached=False,

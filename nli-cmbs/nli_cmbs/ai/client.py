@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from dataclasses import dataclass
 
 import anthropic
 
@@ -13,6 +15,16 @@ from nli_cmbs.ai.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class InferenceResult:
+    """Rich result from an AI inference call."""
+    text: str
+    model_id: str
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    latency_ms: int | None
 
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_BACKOFFS = [1, 2, 4]
@@ -34,10 +46,10 @@ class AnthropicClient:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-    ) -> str:
+    ) -> InferenceResult:
         """Generate a surveillance report.
 
-        Returns the generated report text.
+        Returns an InferenceResult with text, model_id, token usage, and latency.
 
         Raises:
             AIRateLimitError: Rate limit hit after retries exhausted.
@@ -47,6 +59,7 @@ class AnthropicClient:
         """
         rate_limit_retries = 0
         server_error_retries = 0
+        start = time.monotonic()
 
         while True:
             try:
@@ -57,7 +70,14 @@ class AnthropicClient:
                     system=system_prompt,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
-                return response.content[0].text
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                return InferenceResult(
+                    text=response.content[0].text,
+                    model_id=self._model,
+                    prompt_tokens=getattr(response.usage, "input_tokens", None),
+                    completion_tokens=getattr(response.usage, "output_tokens", None),
+                    latency_ms=elapsed_ms,
+                )
 
             except anthropic.RateLimitError as exc:
                 rate_limit_retries += 1
@@ -95,9 +115,10 @@ class AnthropicClient:
             except anthropic.APIConnectionError as exc:
                 raise AIGenerationError(f"Connection error: {exc}") from exc
 
-    def count_tokens(self, text: str) -> int:
-        """Estimate token count using chars/4 heuristic."""
-        return len(text) // 4
+    @property
+    def model_id(self) -> str:
+        """Public accessor for the model identifier."""
+        return self._model
 
 
 def get_anthropic_client() -> AnthropicClient:
