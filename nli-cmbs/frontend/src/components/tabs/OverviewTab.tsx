@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { DealDetail, Loan } from "@/lib/types";
-import { fmtBalance, fmtPct, fmtDscr, loanBalance } from "@/lib/format";
+import { fmtBalance, fmtPct, fmtDscr, loanBalance, getDelinquencyInfo, isMaturedBalloon } from "@/lib/format";
 
 interface OverviewTabProps {
   deal: DealDetail;
@@ -40,42 +40,53 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
     [loans]
   );
 
-  // Compute SS pct by balance
-  const ssBalance = useMemo(() => {
-    const ss = loans.filter((l) => {
-      const s = (l.latest_snapshot?.delinquency_status ?? "").toLowerCase();
-      return s.includes("specially") || s === "ss";
-    });
-    return ss.reduce((sum, l) => sum + loanBalance(l), 0);
+  // Compute SS pct by balance using canonical delinquency codes
+  const { ssBalance, ssCount } = useMemo(() => {
+    const ss = loans.filter((l) =>
+      getDelinquencyInfo(l.latest_snapshot?.delinquency_status).isSpeciallyServiced
+    );
+    return {
+      ssBalance: ss.reduce((sum, l) => sum + loanBalance(l), 0),
+      ssCount: ss.length,
+    };
   }, [loans]);
   const ssPct = totalBalance > 0 ? (ssBalance / totalBalance) * 100 : 0;
-  const ssCount = loans.filter((l) => {
-    const s = (l.latest_snapshot?.delinquency_status ?? "").toLowerCase();
-    return s.includes("specially") || s === "ss";
-  }).length;
 
-  // Delinquency by balance
-  const dqBalance = useMemo(() => {
+  // Delinquency by balance — excludes performing matured balloons ("B"),
+  // which are maturity risk not payment delinquency
+  const { dqBalance, dqCount } = useMemo(() => {
     const dq = loans.filter((l) => {
-      const s = (l.latest_snapshot?.delinquency_status ?? "").toLowerCase();
-      return s.includes("30") || s.includes("60") || s.includes("90") || s.includes("foreclosure") || s.includes("reo");
+      const status = l.latest_snapshot?.delinquency_status;
+      const info = getDelinquencyInfo(status);
+      return info.isDelinquent && !((status ?? "").trim() === "B");
     });
-    return dq.reduce((sum, l) => sum + loanBalance(l), 0);
+    return {
+      dqBalance: dq.reduce((sum, l) => sum + loanBalance(l), 0),
+      dqCount: dq.length,
+    };
   }, [loans]);
   const dqPctBalance = totalBalance > 0 ? (dqBalance / totalBalance) * 100 : 0;
-  const dqCount = loans.filter((l) => {
-    const s = (l.latest_snapshot?.delinquency_status ?? "").toLowerCase();
-    return s.includes("30") || s.includes("60") || s.includes("90") || s.includes("foreclosure") || s.includes("reo");
-  }).length;
+
+  // Matured balloon loans (codes "A" and "B")
+  const { maturedBalance, maturedCount } = useMemo(() => {
+    const mat = loans.filter((l) =>
+      isMaturedBalloon(l.latest_snapshot?.delinquency_status)
+    );
+    return {
+      maturedBalance: mat.reduce((sum, l) => sum + loanBalance(l), 0),
+      maturedCount: mat.length,
+    };
+  }, [loans]);
+  const maturedPct = totalBalance > 0 ? (maturedBalance / totalBalance) * 100 : 0;
 
   // IO loans
   const ioLoans = loans.filter((l) => l.interest_only_indicator);
   const ioBalance = ioLoans.reduce((sum, l) => sum + loanBalance(l), 0);
   const ioPct = totalBalance > 0 ? (ioBalance / totalBalance) * 100 : 0;
 
-  // API provides server-computed metrics (deal.delinquency_rate, deal.wa_ltv, deal.pct_interest_only).
-  // Client-side values (dqPctBalance, ioPct) are used as fallbacks when the API returns null.
-  const dqColor = (deal.delinquency_rate ?? dqPctBalance) > 5 ? "text-rose-600" : undefined;
+  // Use client-side DQ rate which correctly excludes performing matured balloons ("B").
+  // The API's deal.delinquency_rate may include "B" loans, so we prefer our calculation.
+  const dqColor = dqPctBalance > 5 ? "text-rose-600" : undefined;
   const ssColor = ssPct > 5 ? "text-rose-600" : undefined;
   const dscrColor = (deal.wa_dscr ?? 0) < 1.25 ? "text-rose-600" : undefined;
 
@@ -104,11 +115,11 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
         />
       </div>
 
-      {/* Row 2: 4 metric cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      {/* Row 2: metric cards */}
+      <div className={`grid grid-cols-2 ${maturedCount > 0 ? "md:grid-cols-5" : "md:grid-cols-4"} gap-2`}>
         <MetricCard
           label="Delinquency Rate"
-          value={fmtPct(deal.delinquency_rate ?? dqPctBalance)}
+          value={fmtPct(dqPctBalance)}
           sub={`${dqCount} loans by count`}
           color={dqColor}
         />
@@ -127,6 +138,14 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
           value={fmtPct(deal.pct_interest_only ?? ioPct)}
           sub={`${ioLoans.length} loans`}
         />
+        {maturedCount > 0 && (
+          <MetricCard
+            label="Matured Loans"
+            value={fmtPct(maturedPct)}
+            sub={`${maturedCount} loans \u00B7 ${fmtBalance(maturedBalance)}`}
+            color="text-amber-600"
+          />
+        )}
       </div>
 
       {/* Top 10 loans table */}

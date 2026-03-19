@@ -53,6 +53,7 @@ def _latest_snapshot(loan: Loan) -> SnapshotOut | None:
 
 def _property_to_out(prop: Property) -> PropertyOut:
     return PropertyOut(
+        id=str(prop.id),
         property_name=prop.property_name,
         property_city=prop.property_city,
         property_state=prop.property_state,

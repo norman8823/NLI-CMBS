@@ -1,5 +1,8 @@
+// NOTE: This component is not currently used — OverviewTab replaced it.
+// Kept for potential reuse.
 import { Card, CardContent } from "@/components/ui/card";
 import type { DealDetail } from "@/lib/types";
+import { getDelinquencyInfo } from "@/lib/format";
 
 function formatBalance(value: number): string {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
@@ -18,12 +21,9 @@ function computeSpeciallyServiced(
   loanCount: number
 ): number {
   if (!delinquencyByStatus || !loanCount) return 0;
-  // Match status strings like "Specially Serviced", "specially serviced", "SS"
+  // ABS-EE codes: "3"=90+, "4"=bankruptcy, "5"=FC/REO, "A"=NP matured are SS
   const ssCount = Object.entries(delinquencyByStatus)
-    .filter(([status]) => {
-      const s = status.toLowerCase();
-      return s.includes("specially") || s === "ss";
-    })
+    .filter(([status]) => getDelinquencyInfo(status).isSpeciallyServiced)
     .reduce((sum, [, count]) => sum + count, 0);
   return (ssCount / loanCount) * 100;
 }

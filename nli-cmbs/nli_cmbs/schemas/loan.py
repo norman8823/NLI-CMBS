@@ -41,6 +41,7 @@ class SnapshotOut(BaseModel):
 
 
 class PropertyOut(BaseModel):
+    id: str | None = None
     property_name: str | None = None
     property_city: str | None = None
     property_state: str | None = None

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { PropertyModal } from "./PropertyModal";
 import type { Loan } from "@/lib/types";
+import { getDelinquencyInfo } from "@/lib/format";
 
 function formatBalance(value: number | null | undefined): string {
   if (value == null) return "\u2014";
@@ -19,19 +20,6 @@ function formatBalance(value: number | null | undefined): string {
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
 }
-
-const statusBadge = (
-  status: string | null | undefined
-): { label: string; className: string } => {
-  const s = status?.toLowerCase() ?? "";
-  if (s.includes("90") || s.includes("foreclosure") || s.includes("reo"))
-    return { label: "90+", className: "bg-rose-100 text-rose-800" };
-  if (s.includes("60"))
-    return { label: "60", className: "bg-orange-100 text-orange-800" };
-  if (s.includes("30"))
-    return { label: "30", className: "bg-amber-100 text-amber-800" };
-  return { label: "Current", className: "bg-zinc-100 text-zinc-700" };
-};
 
 type SortKey =
   | "loan_id"
@@ -209,7 +197,7 @@ export function LoanTable({ loans }: LoanTableProps) {
           </TableHeader>
           <TableBody>
             {sorted.map((loan, i) => {
-              const badge = statusBadge(getDelinquencyStatus(loan));
+              const badge = getDelinquencyInfo(getDelinquencyStatus(loan));
               const rate = getInterestRate(loan);
               const dscr = getDscr(loan);
               return (
@@ -241,7 +229,7 @@ export function LoanTable({ loans }: LoanTableProps) {
                   <TableCell className="py-2">
                     <Badge
                       variant="outline"
-                      className={`text-[11px] px-1.5 py-0 border-0 ${badge.className}`}
+                      className={`text-[11px] px-1.5 py-0 border-0 ${badge.bgColor}`}
                     >
                       {badge.label}
                     </Badge>

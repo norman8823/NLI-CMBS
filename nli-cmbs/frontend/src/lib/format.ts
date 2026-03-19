@@ -121,22 +121,60 @@ export const PROPERTY_TYPE_COLORS: Record<
   Other: { bg: "#F4F4F5", text: "#52525B" },
 };
 
-/** Status badge config */
+/**
+ * Canonical delinquency status mapping.
+ * ABS-EE XML stores codes: "0","1","2","3","4","5","A","B", not human-readable strings.
+ */
+export interface DelinquencyInfo {
+  label: string;
+  severity: number;  // 0=current, 1=30, 2=60, 3=90+, 4=foreclosure/bankruptcy, 5=matured
+  color: string;     // tailwind text color class
+  bgColor: string;   // tailwind badge background class
+  isDelinquent: boolean;
+  isSpeciallyServiced: boolean;
+}
+
+export function getDelinquencyInfo(status: string | null | undefined): DelinquencyInfo {
+  const code = (status ?? "0").trim();
+  switch (code) {
+    case "1":
+      return { label: "30-Day", severity: 1, color: "text-amber-700", bgColor: "bg-amber-100 text-amber-800", isDelinquent: true, isSpeciallyServiced: false };
+    case "2":
+      return { label: "60-Day", severity: 2, color: "text-orange-700", bgColor: "bg-orange-100 text-orange-800", isDelinquent: true, isSpeciallyServiced: false };
+    case "3":
+      return { label: "90+", severity: 3, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
+    case "4":
+      return { label: "Bankruptcy", severity: 4, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
+    case "5":
+      return { label: "FC/REO", severity: 5, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
+    case "A":
+      return { label: "NP Matured", severity: 4, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
+    case "B":
+      return { label: "Matured", severity: 1, color: "text-amber-700", bgColor: "bg-amber-100 text-amber-800", isDelinquent: false, isSpeciallyServiced: false };
+    case "0":
+    default:
+      return { label: "Current", severity: 0, color: "text-emerald-700", bgColor: "bg-zinc-100 text-zinc-700", isDelinquent: false, isSpeciallyServiced: false };
+  }
+}
+
+/** Returns true for matured balloon codes: "A" (non-performing) and "B" (performing) */
+export function isMaturedBalloon(status: string | null | undefined): boolean {
+  const code = (status ?? "").trim();
+  return code === "A" || code === "B";
+}
+
+/** Status badge config — uses canonical delinquency mapping */
 export function statusConfig(status: string | null | undefined): {
   label: string;
   bg: string;
   text: string;
 } {
-  const s = (status ?? "").toLowerCase();
-  if (s.includes("specially") || s === "ss")
-    return { label: "SS", bg: "#FEE2E2", text: "#991B1B" };
-  if (s.includes("90") || s.includes("foreclosure") || s.includes("reo"))
-    return { label: "90+", bg: "#FEE2E2", text: "#991B1B" };
-  if (s.includes("60"))
-    return { label: "60-day", bg: "#FFEDD5", text: "#9A3412" };
-  if (s.includes("30"))
-    return { label: "30-day", bg: "#FEF3C7", text: "#92400E" };
-  return { label: "Current", bg: "#DCFCE7", text: "#166534" };
+  const info = getDelinquencyInfo(status);
+  // Map severity to hex badge colors for StatusBadge component
+  if (info.severity >= 3) return { label: info.label, bg: "#FEE2E2", text: "#991B1B" };
+  if (info.severity === 2) return { label: info.label, bg: "#FFEDD5", text: "#9A3412" };
+  if (info.severity === 1) return { label: info.label, bg: "#FEF3C7", text: "#92400E" };
+  return { label: info.label, bg: "#DCFCE7", text: "#166534" };
 }
 
 /** Get the current balance for a loan */

@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { HBarChart } from "@/components/charts/HBarChart";
+import { PropertyTrendCharts } from "@/components/charts/PropertyTrendCharts";
+import { PropertyHistoryTable } from "@/components/charts/PropertyHistoryTable";
 import { MetricCard } from "@/components/MetricCard";
 import {
   Table,
@@ -12,6 +15,7 @@ import {
 } from "@/components/ui/table";
 import { PropertyTypeBadge } from "@/components/StatusBadge";
 import type { Loan, LoanProperty } from "@/lib/types";
+import { fetchPropertyHistory } from "@/lib/api";
 import {
   propertyTypeName,
   propertyTypeCategory,
@@ -91,11 +95,20 @@ export function PropertyTab({ loans }: PropertyTabProps) {
   }, [loans]);
 
   const selectedProp = selectedIdx != null ? allProperties[selectedIdx] : null;
+  const selectedPropertyId = selectedProp?.id ?? null;
 
   // Find the loan for the selected property to check if it's a portfolio loan
   const selectedLoan = selectedProp
     ? loans.find((l) => l.id === selectedProp.loanId)
     : null;
+
+  // Fetch property history for trend charts
+  const { data: historyData, isLoading: historyLoading } = useQuery({
+    queryKey: ["property-history", selectedPropertyId],
+    queryFn: () => fetchPropertyHistory(selectedPropertyId!),
+    enabled: !!selectedPropertyId,
+    staleTime: 5 * 60 * 1000,
+  });
 
   return (
     <div className="space-y-4">
@@ -192,6 +205,28 @@ export function PropertyTab({ loans }: PropertyTabProps) {
               value={selectedProp.year_built?.toString() ?? "\u2014"}
             />
           </div>
+
+          {/* Trend charts */}
+          {historyLoading && (
+            <div className="border border-zinc-200 rounded-md p-6 animate-pulse">
+              <div className="h-4 bg-zinc-200 rounded w-1/4 mb-4" />
+              <div className="h-[200px] bg-zinc-100 rounded" />
+            </div>
+          )}
+          {!historyLoading && historyData && historyData.snapshots.length > 0 && (
+            <>
+              <PropertyTrendCharts snapshots={historyData.snapshots} />
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-700 mb-1">
+                  Historical Financials
+                </h3>
+                <p className="text-xs text-zinc-400 italic mb-2">
+                  Source: Monthly ABS-EE filings
+                </p>
+                <PropertyHistoryTable snapshots={historyData.snapshots} />
+              </div>
+            </>
+          )}
 
           {/* Tenants */}
           {selectedProp.largest_tenant && (

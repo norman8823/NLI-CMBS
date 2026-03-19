@@ -12,35 +12,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Loan } from "@/lib/types";
-import { fmtBalance, fmtDscr, loanBalance } from "@/lib/format";
+import { fmtBalance, fmtDscr, fmtRate, fmtMonthYear, loanBalance, getDelinquencyInfo, isMaturedBalloon } from "@/lib/format";
 
 interface CreditTabProps {
   loans: Loan[];
-}
-
-function isDelinquent(status: string | null | undefined): boolean {
-  const s = (status ?? "").toLowerCase();
-  return (
-    s.includes("30") ||
-    s.includes("60") ||
-    s.includes("90") ||
-    s.includes("foreclosure") ||
-    s.includes("reo")
-  );
-}
-
-function isSpeciallyServiced(status: string | null | undefined): boolean {
-  const s = (status ?? "").toLowerCase();
-  return s.includes("specially") || s === "ss";
-}
-
-function daysDelinquent(status: string | null | undefined): string {
-  const s = (status ?? "").toLowerCase();
-  if (s.includes("90") || s.includes("foreclosure") || s.includes("reo"))
-    return "90+";
-  if (s.includes("60")) return "60";
-  if (s.includes("30")) return "30";
-  return "0";
 }
 
 export function CreditTab({ loans }: CreditTabProps) {
@@ -51,31 +26,30 @@ export function CreditTab({ loans }: CreditTabProps) {
     [loans]
   );
 
-  // Bucket counts and balances
+  // Bucket counts and balances using canonical delinquency codes
   const buckets = useMemo(() => {
     const b = {
       current: { count: 0, balance: 0 },
       "30": { count: 0, balance: 0 },
       "60": { count: 0, balance: 0 },
       "90+": { count: 0, balance: 0 },
+      matured: { count: 0, balance: 0 },
     };
     for (const loan of loans) {
       if (loan.parent_loan_id) continue;
-      const s = (loan.latest_snapshot?.delinquency_status ?? "").toLowerCase();
+      const status = loan.latest_snapshot?.delinquency_status;
+      const info = getDelinquencyInfo(status);
       const bal = loanBalance(loan);
-      if (
-        s.includes("90") ||
-        s.includes("foreclosure") ||
-        s.includes("reo") ||
-        s.includes("specially") ||
-        s === "ss"
-      ) {
+      if (isMaturedBalloon(status)) {
+        b.matured.count++;
+        b.matured.balance += bal;
+      } else if (info.severity >= 3) {
         b["90+"].count++;
         b["90+"].balance += bal;
-      } else if (s.includes("60")) {
+      } else if (info.severity === 2) {
         b["60"].count++;
         b["60"].balance += bal;
-      } else if (s.includes("30")) {
+      } else if (info.severity === 1) {
         b["30"].count++;
         b["30"].balance += bal;
       } else {
@@ -95,8 +69,7 @@ export function CreditTab({ loans }: CreditTabProps) {
       loans.filter(
         (l) =>
           !l.parent_loan_id &&
-          (isDelinquent(l.latest_snapshot?.delinquency_status) ||
-            isSpeciallyServiced(l.latest_snapshot?.delinquency_status))
+          getDelinquencyInfo(l.latest_snapshot?.delinquency_status).isDelinquent
       ),
     [loans]
   );
@@ -107,12 +80,27 @@ export function CreditTab({ loans }: CreditTabProps) {
       loans.filter(
         (l) =>
           !l.parent_loan_id &&
-          isSpeciallyServiced(l.latest_snapshot?.delinquency_status)
+          getDelinquencyInfo(l.latest_snapshot?.delinquency_status).isSpeciallyServiced
       ),
     [loans]
   );
 
   const ssBalance = ssLoans.reduce((sum, l) => sum + loanBalance(l), 0);
+
+  // Matured balloon loans (codes "A" and "B")
+  const maturedLoans = useMemo(
+    () =>
+      loans.filter(
+        (l) =>
+          !l.parent_loan_id &&
+          isMaturedBalloon(l.latest_snapshot?.delinquency_status)
+      ),
+    [loans]
+  );
+  const maturedBalance = maturedLoans.reduce((sum, l) => sum + loanBalance(l), 0);
+  const npMaturedCount = maturedLoans.filter(
+    (l) => (l.latest_snapshot?.delinquency_status ?? "").trim() === "A"
+  ).length;
 
   // Modified performing loans (is_modified field may not exist on current type)
   const modifiedLoans: Loan[] = [];
@@ -132,7 +120,7 @@ export function CreditTab({ loans }: CreditTabProps) {
   return (
     <div className="space-y-4">
       {/* Delinquency buckets */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         <MetricCard
           label="Current"
           value={pctOf(buckets.current.balance)}
@@ -156,16 +144,18 @@ export function CreditTab({ loans }: CreditTabProps) {
           sub={`${fmtBalance(buckets["90+"].balance)} \u00B7 ${buckets["90+"].count} loans`}
           color="text-rose-600"
         />
+        <MetricCard
+          label="Matured"
+          value={pctOf(buckets.matured.balance)}
+          sub={`${fmtBalance(buckets.matured.balance)} \u00B7 ${buckets.matured.count} loans`}
+          color="text-amber-600"
+        />
       </div>
 
-      {/* Delinquency trend — hidden until historical snapshot data is available */}
-      {trendData.length > 0 ? (
+      {/* TODO: Wire to historical loan snapshots API */}
+      {trendData.length > 0 && (
         <div className="border border-zinc-200 rounded-md p-4">
           <DelinquencyLineChart data={trendData} />
-        </div>
-      ) : (
-        <div className="border border-zinc-200 rounded-md p-4 text-center text-sm text-zinc-400">
-          Historical trend data not yet available
         </div>
       )}
 
@@ -242,9 +232,10 @@ export function CreditTab({ loans }: CreditTabProps) {
                         />
                       </TableCell>
                       <TableCell className="py-1.5 text-right font-mono text-sm">
-                        {daysDelinquent(
-                          loan.latest_snapshot?.delinquency_status
-                        )}
+                        {(() => {
+                          const info = getDelinquencyInfo(loan.latest_snapshot?.delinquency_status);
+                          return info.label;
+                        })()}
                       </TableCell>
                       <TableCell className="py-1.5 text-right font-mono text-sm">
                         <span
@@ -258,11 +249,132 @@ export function CreditTab({ loans }: CreditTabProps) {
                         </span>
                       </TableCell>
                       <TableCell className="py-1.5 text-sm">
-                        {isSpeciallyServiced(
-                          loan.latest_snapshot?.delinquency_status
-                        )
+                        {getDelinquencyInfo(loan.latest_snapshot?.delinquency_status).isSpeciallyServiced
                           ? "Yes"
                           : "No"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      {/* Matured loans */}
+      <div>
+        <h3 className="text-sm font-semibold text-zinc-700 mb-1">
+          Matured Loans
+        </h3>
+        <p className="text-xs text-zinc-400 italic mb-2">
+          Loans past maturity date that have not been refinanced or paid off
+        </p>
+
+        {maturedLoans.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+            <MetricCard
+              label="Matured Loans"
+              value={maturedLoans.length.toString()}
+            />
+            <MetricCard
+              label="Matured Balance"
+              value={fmtBalance(maturedBalance)}
+              sub={pctOf(maturedBalance) + " of pool"}
+            />
+            {npMaturedCount > 0 && (
+              <MetricCard
+                label="Non-Performing Matured"
+                value={npMaturedCount.toString()}
+                color="text-rose-600"
+              />
+            )}
+          </div>
+        )}
+
+        {maturedLoans.length === 0 ? (
+          <div className="border border-zinc-200 rounded-md p-4 text-center text-sm text-zinc-400">
+            No matured loans
+          </div>
+        ) : (
+          <div className="border border-zinc-200 rounded-md overflow-auto">
+            <Table>
+              <TableHeader className="bg-zinc-50">
+                <TableRow className="hover:bg-zinc-50">
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
+                    Property
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500 text-right">
+                    Balance
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
+                    Status
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500 text-right">
+                    Maturity
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500 text-right">
+                    Rate
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500 text-right">
+                    DSCR
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {maturedLoans.map((loan, i) => {
+                  const location = [loan.property_city, loan.property_state]
+                    .filter(Boolean)
+                    .join(", ");
+                  const dscr =
+                    loan.latest_snapshot?.dscr_noi ??
+                    loan.latest_snapshot?.dscr_noi_at_securitization;
+                  const rate =
+                    loan.latest_snapshot?.current_interest_rate ??
+                    loan.original_interest_rate;
+                  return (
+                    <TableRow
+                      key={loan.id ?? i}
+                      className={`text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
+                    >
+                      <TableCell className="py-1.5">
+                        <div className="font-medium text-sm">
+                          {loan.property_name ?? "\u2014"}
+                        </div>
+                        <div className="text-[11px] text-zinc-400">
+                          {location}
+                          {loan.property_type && (
+                            <>
+                              {" \u00B7 "}
+                              <PropertyTypeBadge code={loan.property_type} />
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono text-sm">
+                        {fmtBalance(loanBalance(loan))}
+                      </TableCell>
+                      <TableCell className="py-1.5">
+                        <StatusBadge
+                          status={loan.latest_snapshot?.delinquency_status}
+                        />
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono text-sm">
+                        {fmtMonthYear(loan.maturity_date)}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono text-sm">
+                        {fmtRate(rate)}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right font-mono text-sm">
+                        <span
+                          className={
+                            dscr != null && dscr < 1.25
+                              ? "text-rose-600"
+                              : ""
+                          }
+                        >
+                          {fmtDscr(dscr)}
+                        </span>
                       </TableCell>
                     </TableRow>
                   );

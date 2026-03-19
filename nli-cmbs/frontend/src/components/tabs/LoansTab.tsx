@@ -18,7 +18,7 @@ import {
   loanBalance,
   propertyTypeName,
   propertyTypeCategory,
-  statusConfig,
+  getDelinquencyInfo,
 } from "@/lib/format";
 
 interface LoansTabProps {
@@ -41,7 +41,7 @@ type SortKey =
 type SortDir = "asc" | "desc";
 
 const PROPERTY_TYPES = ["Office", "Retail", "Multifamily", "Industrial", "Hotel", "Other"];
-const STATUSES = ["Current", "30-day", "60-day", "90+", "SS"];
+const STATUSES = ["Current", "30-Day", "60-Day", "90+", "Bankruptcy", "FC/REO", "Matured", "NP Matured"];
 
 function getSortVal(loan: Loan, key: SortKey): string | number | null {
   switch (key) {
@@ -71,7 +71,7 @@ function getSortVal(loan: Loan, key: SortKey): string | number | null {
     case "ltv":
       return computeLtv(loan);
     case "status":
-      return statusConfig(loan.latest_snapshot?.delinquency_status).label;
+      return getDelinquencyInfo(loan.latest_snapshot?.delinquency_status).label;
     case "orig_date":
       return loan.origination_date;
     case "maturity":
@@ -96,8 +96,8 @@ function matchesTypeFilter(loan: Loan, filters: Set<string>): boolean {
 
 function matchesStatusFilter(loan: Loan, filters: Set<string>): boolean {
   if (filters.size === 0) return true;
-  const cfg = statusConfig(loan.latest_snapshot?.delinquency_status);
-  return filters.has(cfg.label);
+  const info = getDelinquencyInfo(loan.latest_snapshot?.delinquency_status);
+  return filters.has(info.label);
 }
 
 function FilterDropdown({

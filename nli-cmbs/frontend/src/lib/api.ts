@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { DealListItem, DealDetail, Loan, MaturityBucket, Report } from "./types";
+import type { DealListItem, DealDetail, Loan, MaturityBucket, Report, PropertyHistory } from "./types";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://127.0.0.1:8000",
@@ -38,6 +38,15 @@ export async function fetchReport(
   const { data } = await api.get<Report>(`/deals/${ticker}/report`, {
     params: regenerate ? { regenerate: true } : undefined,
   });
+  return data;
+}
+
+export async function fetchPropertyHistory(
+  propertyId: string
+): Promise<PropertyHistory> {
+  const { data } = await api.get<PropertyHistory>(
+    `/properties/${propertyId}/history`
+  );
   return data;
 }
 

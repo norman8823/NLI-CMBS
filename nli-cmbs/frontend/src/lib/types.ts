@@ -70,6 +70,7 @@ export interface LoanSnapshot {
 
 /** Property detail for modal */
 export interface LoanProperty {
+  id: string | null;
   property_name: string | null;
   property_city: string | null;
   property_state: string | null;
@@ -113,6 +114,24 @@ export interface Loan {
   latest_snapshot: LoanSnapshot | null;
   ai_blurb: string | null;
   ai_blurb_generated_at: string | null;
+}
+
+/** GET /properties/{id}/history */
+export interface PropertySnapshot {
+  reporting_period_end: string;
+  occupancy: number | null;
+  noi: number | null;
+  ncf: number | null;
+  dscr_noi: number | null;
+  dscr_ncf: number | null;
+  valuation_amount: number | null;
+}
+
+export interface PropertyHistory {
+  property_id: string;
+  property_name: string | null;
+  snapshot_count: number;
+  snapshots: PropertySnapshot[];
 }
 
 export interface MaturityBucket {
