@@ -36,7 +36,6 @@ export function CreditTab({ loans }: CreditTabProps) {
       "90+": { count: 0, balance: 0 },
     };
     for (const loan of loans) {
-      if (loan.parent_loan_id) continue;
       const info = getDelinquencyInfo(loan.latest_snapshot?.delinquency_status);
       const bal = loanBalance(loan);
       if (info.severity >= 3) {
@@ -64,7 +63,6 @@ export function CreditTab({ loans }: CreditTabProps) {
     () =>
       loans.filter(
         (l) =>
-          !l.parent_loan_id &&
           getDelinquencyInfo(l.latest_snapshot?.delinquency_status).isDelinquent
       ),
     [loans]
@@ -75,7 +73,6 @@ export function CreditTab({ loans }: CreditTabProps) {
     () =>
       loans.filter(
         (l) =>
-          !l.parent_loan_id &&
           getDelinquencyInfo(l.latest_snapshot?.delinquency_status).isSpeciallyServiced
       ),
     [loans]
@@ -88,7 +85,6 @@ export function CreditTab({ loans }: CreditTabProps) {
     () =>
       loans.filter(
         (l) =>
-          !l.parent_loan_id &&
           isMaturityDefault(l)
       ),
     [loans]

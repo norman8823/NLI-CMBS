@@ -107,7 +107,7 @@ async def compute_deal_metrics(session: AsyncSession, deal_id: uuid.UUID) -> Dea
         status = delinq_status or "Unknown"
         delinq_counts[status] = delinq_counts.get(status, 0) + 1
 
-        if status not in ("0", "Unknown", ""):
+        if status not in ("0", "B", "Unknown", ""):
             delinquent_balance += bal
 
         # DSCR (weighted average by balance)
