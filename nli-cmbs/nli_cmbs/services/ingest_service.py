@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -75,6 +76,11 @@ class IngestService:
 
         # Upsert loans, create snapshots, and create properties
         await self._persist_loans(deal, filing, parsed, result)
+
+        # Link A/B note tranches to parent loans
+        ab_linked = await self._link_ab_notes(deal.id)
+        if ab_linked:
+            logger.info("Linked %d A/B note tranches for %s", ab_linked, deal.ticker)
 
         # Update filing
         filing.reporting_period_start = parsed.reporting_period_start
@@ -289,6 +295,34 @@ class IngestService:
             )
             self._session.add(prop)
             result.properties_created += 1
+
+    _AB_PATTERN = re.compile(r"^(\d+)([A-Za-z]+)$")
+
+    async def _link_ab_notes(self, deal_id) -> int:
+        """Link A/B note tranches to their parent loans."""
+        result = await self._session.execute(
+            select(Loan).where(Loan.deal_id == deal_id)
+        )
+        loans = result.scalars().all()
+
+        loan_by_pid: dict[str, Loan] = {
+            loan.prospectus_loan_id: loan for loan in loans
+        }
+
+        updated = 0
+        for loan in loans:
+            match = self._AB_PATTERN.match(loan.prospectus_loan_id)
+            if match and loan.parent_loan_id is None:
+                parent_pid = match.group(1)
+                parent = loan_by_pid.get(parent_pid)
+                if parent and parent.id != loan.id:
+                    loan.parent_loan_id = parent.id
+                    updated += 1
+
+        if updated > 0:
+            await self._session.flush()
+
+        return updated
 
     async def _deal_missing_properties(self, deal: Deal) -> bool:
         """Return True if any loans in this deal are missing properties."""

@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Loan } from "@/lib/types";
-import { fmtBalance, fmtDscr, fmtRate, fmtMonthYear, loanBalance, getDelinquencyInfo, isMaturedBalloon } from "@/lib/format";
+import { fmtBalance, fmtDscr, fmtRate, fmtMonthYear, loanBalance, loanDisplayName, getDelinquencyInfo, isMaturityDefault } from "@/lib/format";
 
 interface CreditTabProps {
   loans: Loan[];
@@ -27,23 +27,19 @@ export function CreditTab({ loans }: CreditTabProps) {
   );
 
   // Bucket counts and balances using canonical delinquency codes
+  // B (performing balloon) → current bucket; A (non-performing) → 90+ bucket
   const buckets = useMemo(() => {
     const b = {
       current: { count: 0, balance: 0 },
       "30": { count: 0, balance: 0 },
       "60": { count: 0, balance: 0 },
       "90+": { count: 0, balance: 0 },
-      matured: { count: 0, balance: 0 },
     };
     for (const loan of loans) {
       if (loan.parent_loan_id) continue;
-      const status = loan.latest_snapshot?.delinquency_status;
-      const info = getDelinquencyInfo(status);
+      const info = getDelinquencyInfo(loan.latest_snapshot?.delinquency_status);
       const bal = loanBalance(loan);
-      if (isMaturedBalloon(status)) {
-        b.matured.count++;
-        b.matured.balance += bal;
-      } else if (info.severity >= 3) {
+      if (info.severity >= 3) {
         b["90+"].count++;
         b["90+"].balance += bal;
       } else if (info.severity === 2) {
@@ -87,20 +83,17 @@ export function CreditTab({ loans }: CreditTabProps) {
 
   const ssBalance = ssLoans.reduce((sum, l) => sum + loanBalance(l), 0);
 
-  // Matured balloon loans (codes "A" and "B")
+  // Maturity default loans (past maturity date with balance > 0)
   const maturedLoans = useMemo(
     () =>
       loans.filter(
         (l) =>
           !l.parent_loan_id &&
-          isMaturedBalloon(l.latest_snapshot?.delinquency_status)
+          isMaturityDefault(l)
       ),
     [loans]
   );
   const maturedBalance = maturedLoans.reduce((sum, l) => sum + loanBalance(l), 0);
-  const npMaturedCount = maturedLoans.filter(
-    (l) => (l.latest_snapshot?.delinquency_status ?? "").trim() === "A"
-  ).length;
 
   // Modified performing loans (is_modified field may not exist on current type)
   const modifiedLoans: Loan[] = [];
@@ -120,7 +113,7 @@ export function CreditTab({ loans }: CreditTabProps) {
   return (
     <div className="space-y-4">
       {/* Delinquency buckets */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <MetricCard
           label="Current"
           value={pctOf(buckets.current.balance)}
@@ -143,12 +136,6 @@ export function CreditTab({ loans }: CreditTabProps) {
           value={pctOf(buckets["90+"].balance)}
           sub={`${fmtBalance(buckets["90+"].balance)} \u00B7 ${buckets["90+"].count} loans`}
           color="text-rose-600"
-        />
-        <MetricCard
-          label="Matured"
-          value={pctOf(buckets.matured.balance)}
-          sub={`${fmtBalance(buckets.matured.balance)} \u00B7 ${buckets.matured.count} loans`}
-          color="text-amber-600"
         />
       </div>
 
@@ -176,6 +163,9 @@ export function CreditTab({ loans }: CreditTabProps) {
             <Table>
               <TableHeader className="bg-zinc-50">
                 <TableRow className="hover:bg-zinc-50">
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
+                    Loan ID
+                  </TableHead>
                   <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
                     Property
                   </TableHead>
@@ -209,9 +199,12 @@ export function CreditTab({ loans }: CreditTabProps) {
                       key={loan.id ?? i}
                       className={`text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
                     >
+                      <TableCell className="py-1.5 font-mono text-xs text-zinc-500">
+                        {loan.prospectus_loan_id}
+                      </TableCell>
                       <TableCell className="py-1.5">
                         <div className="font-medium text-sm">
-                          {loan.property_name ?? "\u2014"}
+                          {loanDisplayName(loan)}
                         </div>
                         <div className="text-[11px] text-zinc-400">
                           {location}
@@ -265,7 +258,7 @@ export function CreditTab({ loans }: CreditTabProps) {
       {/* Matured loans */}
       <div>
         <h3 className="text-sm font-semibold text-zinc-700 mb-1">
-          Matured Loans
+          Maturity Default
         </h3>
         <p className="text-xs text-zinc-400 italic mb-2">
           Loans past maturity date that have not been refinanced or paid off
@@ -274,21 +267,16 @@ export function CreditTab({ loans }: CreditTabProps) {
         {maturedLoans.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
             <MetricCard
-              label="Matured Loans"
+              label="Maturity Default"
               value={maturedLoans.length.toString()}
+              color="text-rose-600"
             />
             <MetricCard
-              label="Matured Balance"
+              label="Default Balance"
               value={fmtBalance(maturedBalance)}
               sub={pctOf(maturedBalance) + " of pool"}
+              color="text-rose-600"
             />
-            {npMaturedCount > 0 && (
-              <MetricCard
-                label="Non-Performing Matured"
-                value={npMaturedCount.toString()}
-                color="text-rose-600"
-              />
-            )}
           </div>
         )}
 
@@ -301,6 +289,9 @@ export function CreditTab({ loans }: CreditTabProps) {
             <Table>
               <TableHeader className="bg-zinc-50">
                 <TableRow className="hover:bg-zinc-50">
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
+                    Loan ID
+                  </TableHead>
                   <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
                     Property
                   </TableHead>
@@ -337,9 +328,12 @@ export function CreditTab({ loans }: CreditTabProps) {
                       key={loan.id ?? i}
                       className={`text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
                     >
+                      <TableCell className="py-1.5 font-mono text-xs text-zinc-500">
+                        {loan.prospectus_loan_id}
+                      </TableCell>
                       <TableCell className="py-1.5">
                         <div className="font-medium text-sm">
-                          {loan.property_name ?? "\u2014"}
+                          {loanDisplayName(loan)}
                         </div>
                         <div className="text-[11px] text-zinc-400">
                           {location}
@@ -419,6 +413,9 @@ export function CreditTab({ loans }: CreditTabProps) {
               <TableHeader className="bg-zinc-50">
                 <TableRow className="hover:bg-zinc-50">
                   <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
+                    Loan ID
+                  </TableHead>
+                  <TableHead className="text-[11px] uppercase font-medium text-zinc-500">
                     Property
                   </TableHead>
                   <TableHead className="text-[11px] uppercase font-medium text-zinc-500 text-right">
@@ -437,8 +434,11 @@ export function CreditTab({ loans }: CreditTabProps) {
                       className={`text-sm cursor-pointer ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
                       onClick={() => toggleExpand(loan.id)}
                     >
+                      <TableCell className="py-1.5 font-mono text-xs text-zinc-500">
+                        {loan.prospectus_loan_id}
+                      </TableCell>
                       <TableCell className="py-1.5 font-medium">
-                        {loan.property_name ?? "\u2014"}
+                        {loanDisplayName(loan)}
                       </TableCell>
                       <TableCell className="py-1.5 text-right font-mono">
                         {fmtBalance(loanBalance(loan))}
@@ -451,7 +451,7 @@ export function CreditTab({ loans }: CreditTabProps) {
                     </TableRow>
                     {expandedSS.has(loan.id) && (
                       <TableRow key={`${loan.id}-detail`} className="bg-zinc-50">
-                        <TableCell colSpan={3} className="py-2 px-4">
+                        <TableCell colSpan={4} className="py-2 px-4">
                           <div className="text-xs text-zinc-500 space-y-1">
                             <div>
                               Loan ID: {loan.prospectus_loan_id} | Origination:{" "}

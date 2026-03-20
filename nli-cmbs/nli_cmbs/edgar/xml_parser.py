@@ -503,7 +503,12 @@ class Ex102Parser:
             if child is None:
                 return None
             current = child
-        return current.text.strip() if current.text else None
+        if current.text is None:
+            return None
+        stripped = current.text.strip()
+        if stripped == "" or stripped.upper() in ("NA", "N/A", "NONE"):
+            return None
+        return stripped
 
     @staticmethod
     def _parse_decimal(value: str | None) -> Decimal | None:

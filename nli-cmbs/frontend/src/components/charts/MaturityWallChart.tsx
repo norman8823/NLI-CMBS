@@ -8,37 +8,61 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { fmtBalance, propertyTypeCategory, PROPERTY_TYPE_COLORS } from "@/lib/format";
+import { fmtBalance, propertyTypeCategory, PROPERTY_TYPE_COLORS, loanBalance } from "@/lib/format";
 import type { Loan } from "@/lib/types";
 
 interface MaturityWallChartProps {
   loans: Loan[];
+  maturityDefault?: Loan[];
 }
 
 const TYPE_KEYS = ["Office", "Retail", "Multifamily", "Industrial", "Hotel", "Other"] as const;
 
-export function MaturityWallChart({ loans }: MaturityWallChartProps) {
+export function MaturityWallChart({ loans, maturityDefault = [] }: MaturityWallChartProps) {
   const data = useMemo(() => {
     const buckets = new Map<string, Record<string, number>>();
 
+    // Future maturing loans by quarter
     for (const loan of loans) {
       if (!loan.maturity_date) continue;
+      if (loanBalance(loan) <= 0) continue;
       const d = new Date(loan.maturity_date + "T00:00:00");
       const q = Math.ceil((d.getMonth() + 1) / 3);
       const key = `${d.getFullYear()} Q${q}`;
-      const balance = loan.latest_snapshot?.ending_balance ?? loan.original_loan_amount;
+      const balance = loanBalance(loan);
       const cat = propertyTypeCategory(loan.property_type);
 
       if (!buckets.has(key)) {
-        buckets.set(key, { Office: 0, Retail: 0, Multifamily: 0, Industrial: 0, Hotel: 0, Other: 0 });
+        buckets.set(key, { Office: 0, Retail: 0, Multifamily: 0, Industrial: 0, Hotel: 0, Other: 0, Matured: 0 });
       }
       buckets.get(key)![cat] += balance;
     }
 
-    return Array.from(buckets.entries())
-      .map(([quarter, vals]) => ({ quarter, ...vals }))
+    type BucketRow = { quarter: string; Office: number; Retail: number; Multifamily: number; Industrial: number; Hotel: number; Other: number; Matured: number };
+
+    const sorted: BucketRow[] = Array.from(buckets.entries())
+      .map(([quarter, vals]) => ({ quarter, ...vals } as BucketRow))
       .sort((a, b) => a.quarter.localeCompare(b.quarter));
-  }, [loans]);
+
+    // Add maturity default as a separate "Matured" bar at the beginning
+    if (maturityDefault.length > 0) {
+      const maturedTotal = maturityDefault.reduce((sum, l) => sum + loanBalance(l), 0);
+      if (maturedTotal > 0) {
+        sorted.unshift({
+          quarter: "Matured",
+          Office: 0,
+          Retail: 0,
+          Multifamily: 0,
+          Industrial: 0,
+          Hotel: 0,
+          Other: 0,
+          Matured: maturedTotal,
+        });
+      }
+    }
+
+    return sorted;
+  }, [loans, maturityDefault]);
 
   if (data.length === 0) {
     return (
@@ -47,6 +71,8 @@ export function MaturityWallChart({ loans }: MaturityWallChartProps) {
       </div>
     );
   }
+
+  const hasMatured = data.some((d) => d.Matured > 0);
 
   return (
     <div>
@@ -105,6 +131,14 @@ export function MaturityWallChart({ loans }: MaturityWallChartProps) {
                 isAnimationActive={false}
               />
             ))}
+            {hasMatured && (
+              <Bar
+                dataKey="Matured"
+                stackId="a"
+                fill="#DC2626"
+                isAnimationActive={false}
+              />
+            )}
           </BarChart>
         </ResponsiveContainer>
       </div>

@@ -940,12 +940,14 @@ async def _backfill(years: int, limit: int, deal_ticker: str) -> None:
 @app.command(name="ingest-news")
 def ingest_news(
     days: int = typer.Option(7, help="Ingest articles from last N days"),
+    all_articles: bool = typer.Option(False, "--all", help="Ingest ALL articles in RSS feed (ignore date filter)"),
     skip_full_text: bool = typer.Option(False, help="Skip fetching full article bodies"),
     skip_summaries: bool = typer.Option(False, help="Skip AI summary generation"),
     dry_run: bool = typer.Option(False, help="Show what would be ingested without saving"),
 ):
     """Ingest recent CMBS news articles from Trepp RSS feed."""
-    asyncio.run(_ingest_news(days, skip_full_text, skip_summaries, dry_run))
+    effective_days = 0 if all_articles else days
+    asyncio.run(_ingest_news(effective_days, skip_full_text, skip_summaries, dry_run))
 
 
 async def _ingest_news(
@@ -958,9 +960,13 @@ async def _ingest_news(
 
     from datetime import timedelta, timezone
 
-    cutoff = __import__("datetime").datetime.now(timezone.utc) - timedelta(days=days)
-    recent = [a for a in articles if a["published_date"] >= cutoff]
-    console.print(f"Found {len(articles)} articles in feed, {len(recent)} from last {days} days")
+    if days > 0:
+        cutoff = __import__("datetime").datetime.now(timezone.utc) - timedelta(days=days)
+        recent = [a for a in articles if a["published_date"] >= cutoff]
+        console.print(f"Found {len(articles)} articles in feed, {len(recent)} from last {days} days")
+    else:
+        recent = articles
+        console.print(f"Found {len(articles)} articles in feed (ingesting all)")
 
     if not recent:
         console.print("[yellow]No recent articles to ingest.[/yellow]")
@@ -1000,6 +1006,72 @@ async def _ingest_news(
             console.print(f"    Themes: {', '.join(a.key_themes)}")
 
     console.print(f"\nDone. Ingested {len(new_articles)} articles from Trepp.")
+
+
+@app.command(name="ingest-pdf")
+def ingest_pdf(
+    path: str = typer.Argument(help="PDF file or directory of PDFs"),
+    skip_summaries: bool = typer.Option(False, help="Skip AI summary generation"),
+    dry_run: bool = typer.Option(False, help="Show what would be ingested"),
+):
+    """Ingest PDF research reports into the knowledge base."""
+    asyncio.run(_ingest_pdf(path, skip_summaries, dry_run))
+
+
+async def _ingest_pdf(path: str, skip_summaries: bool, dry_run: bool) -> None:
+    from pathlib import Path
+
+    from nli_cmbs.services.pdf_ingestion import ingest_pdf_reports
+
+    target = Path(path)
+    if not target.exists():
+        console.print(f"[red]Path not found:[/red] {path}")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Scanning for PDFs:[/bold] {path}")
+
+    if dry_run:
+        if target.is_file():
+            pdf_files = [target] if target.suffix.lower() == ".pdf" else []
+        else:
+            pdf_files = sorted(target.glob("*.pdf"))
+
+        if not pdf_files:
+            console.print("[yellow]No PDF files found.[/yellow]")
+            return
+
+        console.print(f"\n[bold]Dry run — would ingest {len(pdf_files)} PDF(s):[/bold]\n")
+        for f in pdf_files:
+            console.print(f"  {f.name}")
+        return
+
+    ai_client = None
+    if not skip_summaries:
+        from nli_cmbs.ai.client import get_anthropic_client
+        ai_client = get_anthropic_client()
+
+    from nli_cmbs.db.session import async_session_factory
+
+    async with async_session_factory() as session:
+        new_reports = await ingest_pdf_reports(
+            db=session,
+            path=path,
+            generate_summaries=not skip_summaries,
+            ai_client=ai_client,
+        )
+
+    if not new_reports:
+        console.print("[yellow]No new PDFs to ingest (all duplicates or no PDFs found).[/yellow]")
+        return
+
+    console.print(f"\n[green]Ingested {len(new_reports)} PDF report(s):[/green]\n")
+    for r in new_reports:
+        pages = f", {r.page_count} pages" if r.page_count else ""
+        console.print(f"  [green]OK[/green] {r.filename}{pages}")
+        if r.key_themes:
+            console.print(f"    Themes: {', '.join(r.key_themes)}")
+
+    console.print(f"\nDone. Ingested {len(new_reports)} PDF report(s).")
 
 
 @app.command(name="list-news")

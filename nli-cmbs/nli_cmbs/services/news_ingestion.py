@@ -176,10 +176,14 @@ async def ingest_new_articles(
     articles = await fetch_rss_feed()
     logger.info("Fetched %d articles from RSS feed", len(articles))
 
-    # 2. Filter by date
-    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
-    recent = [a for a in articles if a["published_date"] >= cutoff]
-    logger.info("Filtered to %d articles from last %d days", len(recent), since_days)
+    # 2. Filter by date (since_days=0 means ingest all)
+    if since_days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        recent = [a for a in articles if a["published_date"] >= cutoff]
+        logger.info("Filtered to %d articles from last %d days", len(recent), since_days)
+    else:
+        recent = articles
+        logger.info("Ingesting all %d articles (no date filter)", len(recent))
 
     # 3. Check which URLs already exist
     existing_urls: set[str] = set()

@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { PropertyModal } from "./PropertyModal";
 import type { Loan } from "@/lib/types";
-import { getDelinquencyInfo } from "@/lib/format";
+import { getDelinquencyInfo, loanDisplayName } from "@/lib/format";
 
 function formatBalance(value: number | null | undefined): string {
   if (value == null) return "\u2014";
@@ -131,7 +131,7 @@ export function LoanTable({ loans }: LoanTableProps) {
     if (loan.parent_loan_id) {
       return (
         <span className="text-zinc-400 italic text-xs">
-          See Loan {loan.parent_prospectus_loan_id ?? "parent"}
+          {loanDisplayName(loan)}
         </span>
       );
     }
@@ -144,7 +144,7 @@ export function LoanTable({ loans }: LoanTableProps) {
     }
     return (
       <span className="hover:text-blue-700 hover:underline underline-offset-2 max-w-[200px] truncate block">
-        {loan.property_name ?? "\u2014"}
+        {loanDisplayName(loan)}
       </span>
     );
   };

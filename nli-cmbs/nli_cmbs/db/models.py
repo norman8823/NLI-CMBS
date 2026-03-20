@@ -411,6 +411,22 @@ class InferenceLog(Base):
     )
 
 
+class ResearchReport(Base):
+    """PDF research reports ingested into the knowledge base."""
+    __tablename__ = "research_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filename: Mapped[str] = mapped_column(String(500), unique=True, index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="Trepp")
+    published_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    full_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_themes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
+
 class MarketArticle(Base):
     """CMBS market news articles ingested from RSS feeds (Trepp, CREFC, etc.)."""
     __tablename__ = "market_articles"

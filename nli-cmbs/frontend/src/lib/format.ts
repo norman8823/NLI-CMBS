@@ -148,19 +148,28 @@ export function getDelinquencyInfo(status: string | null | undefined): Delinquen
     case "5":
       return { label: "FC/REO", severity: 5, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
     case "A":
-      return { label: "NP Matured", severity: 4, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
+      return { label: "Non-Performing", severity: 4, color: "text-rose-700", bgColor: "bg-rose-100 text-rose-800", isDelinquent: true, isSpeciallyServiced: true };
     case "B":
-      return { label: "Matured", severity: 1, color: "text-amber-700", bgColor: "bg-amber-100 text-amber-800", isDelinquent: false, isSpeciallyServiced: false };
+      return { label: "Balloon", severity: 0, color: "text-blue-600", bgColor: "bg-blue-50 text-blue-700", isDelinquent: false, isSpeciallyServiced: false };
     case "0":
     default:
       return { label: "Current", severity: 0, color: "text-emerald-700", bgColor: "bg-zinc-100 text-zinc-700", isDelinquent: false, isSpeciallyServiced: false };
   }
 }
 
-/** Returns true for matured balloon codes: "A" (non-performing) and "B" (performing) */
-export function isMaturedBalloon(status: string | null | undefined): boolean {
-  const code = (status ?? "").trim();
-  return code === "A" || code === "B";
+/** Returns true for balloon loan codes: "A" (non-performing) and "B" (performing) */
+export function isBalloonLoan(status: string | null | undefined): boolean {
+  const code = (status ?? "0").trim();
+  return code === "B" || code === "A";
+}
+
+/** Returns true if a loan is past its maturity date and still has a balance */
+export function isMaturityDefault(loan: { maturity_date?: string | null; latest_snapshot?: { ending_balance?: number | null } | null }): boolean {
+  if (!loan.maturity_date) return false;
+  const maturity = new Date(loan.maturity_date);
+  const today = new Date();
+  const balance = loan.latest_snapshot?.ending_balance ?? 0;
+  return maturity < today && balance > 0;
 }
 
 /** Status badge config — uses canonical delinquency mapping */
@@ -170,7 +179,9 @@ export function statusConfig(status: string | null | undefined): {
   text: string;
 } {
   const info = getDelinquencyInfo(status);
+  const code = (status ?? "0").trim();
   // Map severity to hex badge colors for StatusBadge component
+  if (code === "B") return { label: info.label, bg: "#DBEAFE", text: "#1D4ED8" }; // blue for Balloon
   if (info.severity >= 3) return { label: info.label, bg: "#FEE2E2", text: "#991B1B" };
   if (info.severity === 2) return { label: info.label, bg: "#FFEDD5", text: "#9A3412" };
   if (info.severity === 1) return { label: info.label, bg: "#FEF3C7", text: "#92400E" };
@@ -183,6 +194,22 @@ export function loanBalance(loan: {
   original_loan_amount: number;
 }): number {
   return loan.latest_snapshot?.ending_balance ?? loan.original_loan_amount;
+}
+
+/** Fallback chain for displaying a loan's name */
+export function loanDisplayName(loan: {
+  property_name?: string | null;
+  parent_loan_id?: string | null;
+  parent_prospectus_loan_id?: string | null;
+  property_city?: string | null;
+  property_state?: string | null;
+  prospectus_loan_id: string;
+}): string {
+  if (loan.property_name) return loan.property_name;
+  if (loan.parent_loan_id) return "See Loan " + (loan.parent_prospectus_loan_id ?? "parent");
+  const loc = [loan.property_city, loan.property_state].filter(Boolean).join(", ");
+  if (loc) return loc;
+  return "Loan " + loan.prospectus_loan_id;
 }
 
 /** Months between now and a date string */

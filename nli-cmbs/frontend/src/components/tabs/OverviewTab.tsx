@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { DealDetail, Loan } from "@/lib/types";
-import { fmtBalance, fmtPct, fmtDscr, loanBalance, getDelinquencyInfo, isMaturedBalloon } from "@/lib/format";
+import { fmtBalance, fmtPct, fmtDscr, loanBalance, loanDisplayName, getDelinquencyInfo, isMaturityDefault } from "@/lib/format";
 
 interface OverviewTabProps {
   deal: DealDetail;
@@ -67,11 +67,9 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
   }, [loans]);
   const dqPctBalance = totalBalance > 0 ? (dqBalance / totalBalance) * 100 : 0;
 
-  // Matured balloon loans (codes "A" and "B")
+  // Maturity default loans (past maturity with balance > 0)
   const { maturedBalance, maturedCount } = useMemo(() => {
-    const mat = loans.filter((l) =>
-      isMaturedBalloon(l.latest_snapshot?.delinquency_status)
-    );
+    const mat = loans.filter((l) => isMaturityDefault(l));
     return {
       maturedBalance: mat.reduce((sum, l) => sum + loanBalance(l), 0),
       maturedCount: mat.length,
@@ -140,10 +138,10 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
         />
         {maturedCount > 0 && (
           <MetricCard
-            label="Matured Loans"
+            label="Maturity Default"
             value={fmtPct(maturedPct)}
             sub={`${maturedCount} loans \u00B7 ${fmtBalance(maturedBalance)}`}
-            color="text-amber-600"
+            color="text-rose-600"
           />
         )}
       </div>
@@ -157,6 +155,7 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
           <Table>
             <TableHeader className="bg-zinc-50">
               <TableRow className="hover:bg-zinc-50">
+                <TableHead className="text-[11px] uppercase font-medium text-zinc-500">Loan ID</TableHead>
                 <TableHead className="text-[11px] uppercase font-medium text-zinc-500">Property</TableHead>
                 <TableHead className="text-[11px] uppercase font-medium text-zinc-500">Type</TableHead>
                 <TableHead className="text-[11px] uppercase font-medium text-zinc-500">Location</TableHead>
@@ -171,8 +170,8 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
                 const pctPool = totalBalance > 0 ? (bal / totalBalance) * 100 : 0;
                 const propName =
                   loan.property_count > 1
-                    ? `${loan.property_name ?? "Portfolio"} (${loan.property_count})`
-                    : loan.property_name ?? "\u2014";
+                    ? `${loanDisplayName(loan)} (${loan.property_count})`
+                    : loanDisplayName(loan);
                 const location = [loan.property_city, loan.property_state]
                   .filter(Boolean)
                   .join(", ");
@@ -182,6 +181,9 @@ export function OverviewTab({ deal, loans, ticker }: OverviewTabProps) {
                     key={loan.id ?? i}
                     className={`text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
                   >
+                    <TableCell className="py-1.5 font-mono text-xs text-zinc-500">
+                      {loan.prospectus_loan_id}
+                    </TableCell>
                     <TableCell className="py-1.5 font-medium text-sm max-w-[200px] truncate">
                       {propName}
                     </TableCell>

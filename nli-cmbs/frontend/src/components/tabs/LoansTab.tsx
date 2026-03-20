@@ -16,6 +16,7 @@ import {
   fmtPct,
   fmtMonthYear,
   loanBalance,
+  loanDisplayName,
   propertyTypeName,
   propertyTypeCategory,
   getDelinquencyInfo,
@@ -26,6 +27,7 @@ interface LoansTabProps {
 }
 
 type SortKey =
+  | "loan_id"
   | "property"
   | "type"
   | "location"
@@ -41,10 +43,12 @@ type SortKey =
 type SortDir = "asc" | "desc";
 
 const PROPERTY_TYPES = ["Office", "Retail", "Multifamily", "Industrial", "Hotel", "Other"];
-const STATUSES = ["Current", "30-Day", "60-Day", "90+", "Bankruptcy", "FC/REO", "Matured", "NP Matured"];
+const STATUSES = ["Current", "30-Day", "60-Day", "90+", "Bankruptcy", "FC/REO", "Balloon", "Non-Performing"];
 
 function getSortVal(loan: Loan, key: SortKey): string | number | null {
   switch (key) {
+    case "loan_id":
+      return loan.prospectus_loan_id;
     case "property":
       return loan.property_name;
     case "type":
@@ -218,6 +222,7 @@ export function LoansTab({ loans }: LoansTabProps) {
     align?: "right";
     filter?: React.ReactNode;
   }[] = [
+    { key: "loan_id", label: "Loan ID" },
     { key: "property", label: "Properties" },
     {
       key: "type",
@@ -304,14 +309,17 @@ export function LoansTab({ loans }: LoansTabProps) {
                 .join(", ");
               const propName =
                 loan.property_count > 1
-                  ? `${loan.property_name ?? "Portfolio"} (${loan.property_count})`
-                  : loan.property_name ?? "\u2014";
+                  ? `${loanDisplayName(loan)} (${loan.property_count})`
+                  : loanDisplayName(loan);
 
               return (
                 <TableRow
                   key={loan.id ?? i}
                   className={`text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}`}
                 >
+                  <TableCell className="py-1.5 font-mono text-xs text-zinc-500">
+                    {loan.prospectus_loan_id}
+                  </TableCell>
                   <TableCell className="py-1.5 font-medium text-sm max-w-[180px] truncate">
                     {propName}
                   </TableCell>

@@ -26,6 +26,7 @@ dependencies = [
     "feedparser",
     "beautifulsoup4",
     "html2text",
+    "pdfplumber>=0.10.0",
 ]
 
 [project.optional-dependencies]
